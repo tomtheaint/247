@@ -31,8 +31,9 @@ export async function register(req: Request, res: Response, next: NextFunction) 
     if (existing) throw new AppError("Email or username already taken", 409);
 
     const passwordHash = await bcrypt.hash(body.password, config.bcryptRounds);
+    const { password: _pw, ...bodyRest } = body;
     const user = await prisma.user.create({
-      data: { ...body, passwordHash, password: undefined, timezone: body.timezone ?? "America/New_York" },
+      data: { ...bodyRest, passwordHash, timezone: bodyRest.timezone ?? "America/New_York" },
       select: { id: true, email: true, username: true, displayName: true },
     });
 

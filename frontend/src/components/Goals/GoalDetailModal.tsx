@@ -47,7 +47,7 @@ function MilestoneRow({ m, index }: { m: Milestone; index: number }) {
 }
 
 export function GoalDetailModal({ goal: initialGoal, onClose }: Props) {
-  const [goal, setGoal] = useState<Goal>(initialGoal);
+  const [goal] = useState<Goal>(initialGoal);
   const [milestones, setMilestones] = useState<Milestone[]>(initialGoal.milestones ?? []);
   const [loadingMilestones, setLoadingMilestones] = useState(!initialGoal.milestones);
 

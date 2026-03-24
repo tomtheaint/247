@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { format, addMinutes } from "date-fns";
 import { Modal } from "../UI/Modal";
 import { Button } from "../UI/Button";
@@ -50,7 +50,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
   const { goals } = useGoalStore();
   const [snoozing, setSnoozing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const { register, handleSubmit, reset, watch, setValue, control, formState: { errors, isSubmitting } } = useForm<FormData>({
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm<FormData>({
     defaultValues: { recurFreq: "none", recurInterval: 1, recurDays: [], recurDaysFilter: "all", recurEndDate: "", isLocked: false, priority: "NORMAL" },
   });
 

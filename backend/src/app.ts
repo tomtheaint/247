@@ -3,13 +3,14 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
+import path from "path";
 import { config } from "./config";
 import routes from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
 
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: config.frontendUrl, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan(config.nodeEnv === "production" ? "combined" : "dev"));
@@ -20,6 +21,17 @@ app.use(
 );
 
 app.use("/api", routes);
+
+// Serve frontend static files in production (combined image)
+if (config.nodeEnv === "production") {
+  const publicDir = path.join(__dirname, "../public");
+  app.use(express.static(publicDir));
+  // Catch-all: return index.html for client-side routing
+  app.get("*", (_req: express.Request, res: express.Response) => {
+    res.sendFile(path.join(publicDir, "index.html"));
+  });
+}
+
 app.use(errorHandler);
 
 export default app;

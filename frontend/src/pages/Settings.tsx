@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "react-hot-toast";

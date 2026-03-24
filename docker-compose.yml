@@ -16,40 +16,21 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
-    build:
-      context: ./backend
-      target: development
+  app:
+    image: tomtheaint/247:latest
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-app247}:${POSTGRES_PASSWORD:-secret}@db:5432/${POSTGRES_DB:-app247}
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_refresh_secret}
       PORT: 4000
-      NODE_ENV: development
+      NODE_ENV: production
+      FRONTEND_URL: ${FRONTEND_URL:-*}
     ports:
       - "4000:4000"
-    volumes:
-      - ./backend/src:/app/src
-      - ./backend/prisma:/app/prisma
     depends_on:
       db:
         condition: service_healthy
-    command: sh -c "npx prisma db push --accept-data-loss && npm run dev"
-
-  frontend:
-    build:
-      context: ./frontend
-      target: development
-    restart: unless-stopped
-    environment:
-      VITE_API_URL: http://localhost:4000/api
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend/src:/app/src
-    depends_on:
-      - backend
 
 volumes:
   pgdata:

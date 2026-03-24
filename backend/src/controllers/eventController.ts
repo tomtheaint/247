@@ -1,6 +1,6 @@
 import { Response, NextFunction } from "express";
 import { z } from "zod";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import { AuthRequest } from "../types";
 import { AppError } from "../middleware/errorHandler";
 import { expandRecurring } from "../utils/recurrence";
@@ -108,7 +108,7 @@ export async function createEvent(req: AuthRequest, res: Response, next: NextFun
       throw new AppError("endTime must be after startTime", 400);
     }
     const event = await prisma.event.create({
-      data: { ...body, userId: req.user!.id },
+      data: { ...body, userId: req.user!.id, recurrence: (body.recurrence ?? undefined) as Prisma.InputJsonValue | undefined },
       include: { goal: { select: { id: true, title: true, color: true, icon: true } } },
     });
     res.status(201).json(event);
@@ -175,7 +175,7 @@ export async function detachInstance(req: AuthRequest, res: Response, next: Next
           userId: req.user!.id,
           isRecurring: false,
           priority: parent.priority,
-          recurrence: null,
+          recurrence: Prisma.DbNull,
         },
         include: { goal: { select: { id: true, title: true, color: true, icon: true } } },
       }),

@@ -1,6 +1,6 @@
 import { Response, NextFunction } from "express";
 import { z } from "zod";
-import { PrismaClient, GoalCategory, TrackDifficulty, ReactionType } from "@prisma/client";
+import { PrismaClient, GoalCategory, TrackDifficulty, ReactionType, Prisma } from "@prisma/client";
 import { AuthRequest, paginate } from "../types";
 import { AppError } from "../middleware/errorHandler";
 import { addDays, startOfDay } from "../utils/dates";
@@ -87,7 +87,7 @@ export async function createTrack(req: AuthRequest, res: Response, next: NextFun
       data: {
         ...rest,
         authorId: req.user!.id,
-        steps: steps ? { create: steps } : undefined,
+        steps: steps ? { create: steps.map(s => ({ ...s, resources: (s.resources ?? undefined) as Prisma.InputJsonValue | undefined })) } : undefined,
       },
       include: { steps: { orderBy: { order: "asc" } } },
     });
