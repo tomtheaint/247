@@ -1,0 +1,277 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Chronotype {
+  EARLY_BIRD
+  MID_DAY
+  NIGHT_OWL
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+  ARCHIVED
+}
+
+enum GoalCategory {
+  FITNESS
+  LEARNING
+  CAREER
+  HEALTH
+  CREATIVE
+  SOCIAL
+  FINANCE
+  OTHER
+}
+
+enum TrackDifficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum Role {
+  USER
+  REVIEWER
+  ADMIN
+}
+
+enum ReactionType {
+  LIKE
+  DISLIKE
+}
+
+enum Priority {
+  HIGH
+  NORMAL
+  LOW
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  username     String   @unique
+  passwordHash String
+  displayName  String?
+  bio          String?
+  avatarUrl    String?
+  isPublic     Boolean   @default(true)
+  role         Role      @default(USER)
+  // Schedule preferences
+  wakeTimeWeekday  String    @default("07:00")
+  sleepTimeWeekday String    @default("23:00")
+  wakeTimeWeekend  String    @default("08:00")
+  sleepTimeWeekend String    @default("23:00")
+  chronotype       Chronotype @default(MID_DAY)
+  showHolidays     Boolean    @default(true)
+  timezone         String     @default("America/New_York")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  goals        Goal[]
+  events       Event[]
+  tracks       Track[]       @relation("TrackAuthor")
+  userTracks   UserTrack[]
+  progress     Progress[]
+  following    Follow[]      @relation("Follower")
+  followers    Follow[]      @relation("Following")
+  refreshTokens        RefreshToken[]
+  calendarIntegrations CalendarIntegration[]
+  trackReactions       TrackReaction[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Goal {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  category    GoalCategory @default(OTHER)
+  status      GoalStatus   @default(ACTIVE)
+  color       String       @default("#6366f1")
+  icon        String       @default("🎯")
+  isPublic    Boolean      @default(false)
+  targetDate  DateTime?
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+
+  events          Event[]
+  milestones      Milestone[]
+  progress        Progress[]
+  promotedTracks  Track[]    @relation("PromotedGoal")
+  programTrackId  String?
+  programTrack    Track?     @relation("TrackGoals", fields: [programTrackId], references: [id], onDelete: SetNull)
+  trackGoalOrder  Int        @default(0)
+}
+
+model Milestone {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  dueDate     DateTime?
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  goalId      String
+  goal        Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+}
+
+model Event {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  startTime   DateTime
+  endTime     DateTime
+  allDay      Boolean   @default(false)
+  color       String?
+  isLocked    Boolean   @default(false)
+  isCompleted Boolean   @default(false)
+  isRecurring Boolean   @default(false)
+  priority    Priority  @default(NORMAL)
+  recurrence  Json?
+  goalId      String?
+  goal        Goal?     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackStepId String?
+  trackStep   TrackStep? @relation(fields: [trackStepId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Track {
+  id           String          @id @default(cuid())
+  title        String
+  description  String
+  category     GoalCategory    @default(OTHER)
+  difficulty   TrackDifficulty @default(BEGINNER)
+  estimatedDays Int            @default(30)
+  isPublic     Boolean         @default(false)
+  rating       Float           @default(0)
+  ratingCount  Int             @default(0)
+  adoptionCount Int            @default(0)
+  tags         String[]
+  likes        Int             @default(0)
+  dislikes     Int             @default(0)
+  goalId       String?
+  goal         Goal?           @relation("PromotedGoal", fields: [goalId], references: [id], onDelete: SetNull)
+  goals        Goal[]          @relation("TrackGoals")
+  authorId     String
+  author       User            @relation("TrackAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  steps       TrackStep[]
+  userTracks  UserTrack[]
+  reviews     Review[]
+  reactions   TrackReaction[]
+}
+
+model TrackStep {
+  id             String   @id @default(cuid())
+  title          String
+  description    String
+  dayOffset      Int
+  durationMinutes Int     @default(60)
+  resources      Json?
+  order          Int
+  trackId        String
+  track          Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+
+  events         Event[]
+}
+
+model UserTrack {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackId     String
+  track       Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  startDate   DateTime  @default(now())
+  completedAt DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, trackId])
+}
+
+model Progress {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goalId      String
+  goal        Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  note        String?
+  value       Float    @default(0)
+  recordedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  trackId   String
+  track     Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  authorId  String
+  rating    Int
+  body      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([trackId, authorId])
+}
+
+model CalendarIntegration {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String    // "google" | "microsoft"
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  email        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([userId, provider])
+}
+
+model Follow {
+  followerId  String
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@id([followerId, followingId])
+}
+
+model TrackReaction {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackId   String
+  track     Track        @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  type      ReactionType
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, trackId])
+}
