@@ -105,6 +105,14 @@ const CHRONOTYPE_OPTIONS = [
   { value: "NIGHT_OWL",  label: "🦉 Night Owl",  desc: "Prefers evening hours (6 pm – 10 pm)" },
 ] as const;
 
+function snapTime(current: string, direction: 1 | -1): string {
+  const [h, m] = current.split(":").map(Number);
+  const totalMins = h * 60 + m;
+  const snapped = Math.round(totalMins / 30) * 30 + direction * 30;
+  const clamped = Math.max(0, Math.min(23 * 60 + 30, snapped));
+  return `${String(Math.floor(clamped / 60)).padStart(2, "0")}:${String(clamped % 60).padStart(2, "0")}`;
+}
+
 function PreferencesForm() {
   const { register, handleSubmit, reset, watch, setValue, control, formState: { isSubmitting } } = useForm<UserPreferences>();
   const chronotype = watch("chronotype");
@@ -163,8 +171,8 @@ function PreferencesForm() {
       <div>
         <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Weekday schedule</p>
         <div className="grid grid-cols-2 gap-4">
-          <Input label="Wake time" type="time" {...register("wakeTimeWeekday")} />
-          <Input label="Sleep time" type="time" {...register("sleepTimeWeekday")} />
+          <Input label="Wake time" type="time" step={1800} {...register("wakeTimeWeekday")} onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); setValue("wakeTimeWeekday", snapTime(watch("wakeTimeWeekday") ?? "07:00", e.key === "ArrowUp" ? 1 : -1)); } }} />
+          <Input label="Sleep time" type="time" step={1800} {...register("sleepTimeWeekday")} onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); setValue("sleepTimeWeekday", snapTime(watch("sleepTimeWeekday") ?? "23:00", e.key === "ArrowUp" ? 1 : -1)); } }} />
         </div>
       </div>
 
@@ -172,8 +180,8 @@ function PreferencesForm() {
       <div>
         <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Weekend schedule</p>
         <div className="grid grid-cols-2 gap-4">
-          <Input label="Wake time" type="time" {...register("wakeTimeWeekend")} />
-          <Input label="Sleep time" type="time" {...register("sleepTimeWeekend")} />
+          <Input label="Wake time" type="time" step={1800} {...register("wakeTimeWeekend")} onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); setValue("wakeTimeWeekend", snapTime(watch("wakeTimeWeekend") ?? "08:00", e.key === "ArrowUp" ? 1 : -1)); } }} />
+          <Input label="Sleep time" type="time" step={1800} {...register("sleepTimeWeekend")} onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); setValue("sleepTimeWeekend", snapTime(watch("sleepTimeWeekend") ?? "23:00", e.key === "ArrowUp" ? 1 : -1)); } }} />
         </div>
       </div>
 

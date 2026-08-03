@@ -665,10 +665,12 @@ export function CalendarPage() {
     const isWeekend = dow === 0 || dow === 6;
     const wakeStr  = isWeekend ? user.wakeTimeWeekend  : user.wakeTimeWeekday;
     const sleepStr = isWeekend ? user.sleepTimeWeekend : user.sleepTimeWeekday;
-    const wakeHour  = parseInt((wakeStr  ?? "07:00").split(":")[0], 10);
-    const sleepHour = parseInt((sleepStr ?? "23:00").split(":")[0], 10);
-    const hour = slotDate.getHours();
-    if (hour < wakeHour || hour >= sleepHour) {
+    const [wakeH, wakeM]   = (wakeStr  ?? "07:00").split(":").map(Number);
+    const [sleepH, sleepM] = (sleepStr ?? "23:00").split(":").map(Number);
+    const slotMinutes  = slotDate.getHours() * 60 + slotDate.getMinutes();
+    const wakeMinutes  = wakeH  * 60 + wakeM;
+    const sleepMinutes = sleepH * 60 + sleepM;
+    if (slotMinutes < wakeMinutes || slotMinutes >= sleepMinutes) {
       return { style: { backgroundColor: "rgba(0,0,0,0.045)" } };
     }
     return {};
