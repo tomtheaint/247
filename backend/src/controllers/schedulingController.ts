@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import { AuthRequest } from "../types";
 import { AppError } from "../middleware/errorHandler";
 import { generateGoalSlots, expandRecurring } from "../utils/recurrence";
-import { detectConflicts, conflictsWithSleep, findAlternativeSlot, findBestSlot, findNextAvailableSlot } from "../utils/conflicts";
+import { detectConflicts, conflictsWithSleep, findAlternativeSlot, findBestSlot, findNextAvailableSlot, isInformational } from "../utils/conflicts";
 
 const prisma = new PrismaClient();
 
@@ -135,12 +135,12 @@ export async function getConflicts(req: AuthRequest, res: Response, next: NextFu
     const [nonRecurring, recurring, prefs] = await Promise.all([
       prisma.event.findMany({
         where: { userId: req.user!.id, isRecurring: false, startTime: { gte: rangeStart, lte: rangeEnd } },
-        select: { id: true, title: true, startTime: true, endTime: true, goalId: true, isLocked: true, isRecurring: true, recurrence: true },
+        select: { id: true, title: true, startTime: true, endTime: true, goalId: true, isLocked: true, isRecurring: true, recurrence: true, priority: true },
       }),
       // Recurring templates may predate the range — fetch all whose template start <= rangeEnd
       prisma.event.findMany({
         where: { userId: req.user!.id, isRecurring: true, startTime: { lte: rangeEnd } },
-        select: { id: true, title: true, startTime: true, endTime: true, goalId: true, isLocked: true, isRecurring: true, recurrence: true },
+        select: { id: true, title: true, startTime: true, endTime: true, goalId: true, isLocked: true, isRecurring: true, recurrence: true, priority: true },
       }),
       prisma.user.findUnique({
         where: { id: req.user!.id },
@@ -157,6 +157,14 @@ export async function getConflicts(req: AuthRequest, res: Response, next: NextFu
     const { instances: recurInstances, parentMap } = buildRecurInstances(recurring, rangeStart, rangeEnd);
     const conflicted = detectConflicts([...nonRecurring, ...recurInstances], prefs, tz);
 
+    // The detail maps below answer "what does this clash with?", and an
+    // informational event is not an answer to that. detectConflicts already
+    // ignores them, so nothing is ever *flagged* because of one — but the lists
+    // are built by re-scanning for overlaps, and without this an informational
+    // event still turned up in the explanation as something to resolve.
+    const realNonRecurring  = nonRecurring.filter((e) => !isInformational(e));
+    const realRecurInstances = recurInstances.filter((e) => !isInformational(e));
+
     // Build per-parent detail map: what does each conflicting recurring series clash with?
     // Build a lookup of recurring titles for recurring-vs-recurring conflicts.
     const recurringTitles = new Map(recurring.map((r) => [r.id, r.title]));
@@ -169,7 +177,7 @@ export async function getConflicts(req: AuthRequest, res: Response, next: NextFu
       if (!conflictingByParent[parentId]) conflictingByParent[parentId] = [];
 
       // 1. Overlapping non-recurring events
-      for (const nr of nonRecurring) {
+      for (const nr of realNonRecurring) {
         if (inst.startTime < nr.endTime && inst.endTime > nr.startTime) {
           if (!conflictingByParent[parentId].some((x) => x.title === nr.title)) {
             conflictingByParent[parentId].push({ title: nr.title, startTime: nr.startTime.toISOString(), endTime: nr.endTime.toISOString() });
@@ -178,7 +186,7 @@ export async function getConflicts(req: AuthRequest, res: Response, next: NextFu
       }
 
       // 2. Overlapping instances from OTHER recurring series
-      for (const other of recurInstances) {
+      for (const other of realRecurInstances) {
         if (other.id === inst.id) continue;
         const otherParentId = parentMap.get(other.id);
         if (!otherParentId || otherParentId === parentId) continue;
@@ -207,7 +215,7 @@ export async function getConflicts(req: AuthRequest, res: Response, next: NextFu
       conflictingByEvent[ev.id] = [];
 
       // 1. Overlapping non-recurring events
-      for (const other of nonRecurring) {
+      for (const other of realNonRecurring) {
         if (other.id === ev.id) continue;
         if (ev.startTime < other.endTime && ev.endTime > other.startTime) {
           if (!conflictingByEvent[ev.id].some((x) => x.title === other.title)) {
@@ -217,7 +225,7 @@ export async function getConflicts(req: AuthRequest, res: Response, next: NextFu
       }
 
       // 2. Overlapping recurring instances
-      for (const inst of recurInstances) {
+      for (const inst of realRecurInstances) {
         if (ev.startTime < inst.endTime && ev.endTime > inst.startTime) {
           const parentId = parentMap.get(inst.id);
           const title = parentId ? (recurringTitles.get(parentId) ?? "recurring event") : "recurring event";
@@ -375,9 +383,11 @@ export async function optimizeSchedule(req: AuthRequest, res: Response, next: Ne
       return;
     }
 
-    // Locked events + HIGH priority + recurring instances are immovable walls everything fits around
-    const locked   = nonRecurring.filter((e) => e.isLocked || e.priority === "HIGH");
-    const movable  = nonRecurring.filter((e) => !e.isLocked && e.priority !== "HIGH")
+    // Locked events + HIGH priority + recurring instances are immovable walls everything fits around.
+    // Informational ones are neither wall nor work: they are excluded from both
+    // lists, so nothing is scheduled around them and they are never moved.
+    const locked   = nonRecurring.filter((e) => !isInformational(e) && (e.isLocked || e.priority === "HIGH"));
+    const movable  = nonRecurring.filter((e) => !isInformational(e) && !e.isLocked && e.priority !== "HIGH")
       .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
     const placed: Array<{ id: string; startTime: Date; endTime: Date }> = [];
@@ -385,7 +395,7 @@ export async function optimizeSchedule(req: AuthRequest, res: Response, next: Ne
 
     for (const ev of movable) {
       const durationMs = ev.endTime.getTime() - ev.startTime.getTime();
-      const occupied   = [...locked, ...recurInstances, ...placed];
+      const occupied   = [...locked, ...recurInstances.filter((r) => !isInformational(r)), ...placed];
       const slot = findBestSlot(ev, durationMs, occupied, prefs, rangeStart, rangeEnd, tzOffset);
 
       if (slot) {
@@ -434,7 +444,13 @@ export async function snoozeEvent(req: AuthRequest, res: Response, next: NextFun
 
     const [futureEvents, prefs] = await Promise.all([
       prisma.event.findMany({
-        where: { userId: req.user!.id, isRecurring: false, id: { not: ev.id }, startTime: { gt: ev.startTime } },
+        // Informational events are excluded here rather than filtered later:
+        // they are not space anyone is occupying, so a snooze should be free to
+        // land on top of one.
+        where: {
+          userId: req.user!.id, isRecurring: false, id: { not: ev.id },
+          startTime: { gt: ev.startTime }, priority: { not: "INFORMATIONAL" },
+        },
         select: { startTime: true, endTime: true },
       }),
       prisma.user.findUnique({
@@ -477,11 +493,18 @@ export async function takeDayOff(req: AuthRequest, res: Response, next: NextFunc
 
     const [dayEvents, futureEvents, prefs] = await Promise.all([
       prisma.event.findMany({
-        where: { userId: req.user!.id, isRecurring: false, isLocked: false, startTime: { gte: dayStart, lt: dayEnd } },
+        // Clearing the day does not mean clearing the birthdays off it.
+        where: {
+          userId: req.user!.id, isRecurring: false, isLocked: false,
+          startTime: { gte: dayStart, lt: dayEnd }, priority: { not: "INFORMATIONAL" },
+        },
         select: { id: true, startTime: true, endTime: true, goalId: true },
       }),
       prisma.event.findMany({
-        where: { userId: req.user!.id, isRecurring: false, startTime: { gte: dayEnd } },
+        where: {
+          userId: req.user!.id, isRecurring: false,
+          startTime: { gte: dayEnd }, priority: { not: "INFORMATIONAL" },
+        },
         select: { startTime: true, endTime: true },
       }),
       prisma.user.findUnique({

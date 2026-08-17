@@ -12,7 +12,7 @@ type RecurFreq = "none" | "daily" | "weekly" | "monthly";
 type DaysFilter = "all" | "weekdays" | "weekends";
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-type Priority = "HIGH" | "NORMAL" | "LOW";
+type Priority = "HIGH" | "NORMAL" | "LOW" | "INFORMATIONAL";
 
 interface FormData {
   title: string;
@@ -38,6 +38,7 @@ interface Props {
   onSnooze?: (id: string) => Promise<void>;
   event?: CalendarEvent | null;
   defaultStart?: Date;
+  defaultEnd?: Date;
 }
 
 function toDatetimeLocal(iso: string) {
@@ -46,7 +47,7 @@ function toDatetimeLocal(iso: string) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, defaultStart }: Props) {
+export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, defaultStart, defaultEnd }: Props) {
   const { goals } = useGoalStore();
   const [snoozing, setSnoozing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -82,7 +83,9 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
       });
     } else {
       const start = defaultStart ?? new Date();
-      const end = addMinutes(start, 60);
+      // An hour is the default duration, not the only one: a dragged selection
+      // already knows how long it is.
+      const end = defaultEnd && defaultEnd > start ? defaultEnd : addMinutes(start, 60);
       reset({
         title: "",
         description: "",
@@ -98,7 +101,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
         recurEndDate: "",
       });
     }
-  }, [event, defaultStart, reset]);
+  }, [event, defaultStart, defaultEnd, reset]);
 
   // Quick duration: sets endTime relative to current startTime
   const setDuration = (minutes: number) => {
@@ -226,6 +229,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
               { value: "HIGH",   label: "High",   color: "border-red-400 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300" },
               { value: "NORMAL", label: "Normal", color: "border-brand-400 bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-300" },
               { value: "LOW",    label: "Low",    color: "border-gray-400 bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300" },
+              { value: "INFORMATIONAL", label: "Info", color: "border-sky-400 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300" },
             ] as { value: Priority; label: string; color: string }[]).map((opt) => (
               <button
                 key={opt.value}
@@ -242,6 +246,12 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
           </div>
           {priority === "HIGH" && (
             <p className="text-xs text-red-600 dark:text-red-400">High priority events won't be moved by the optimizer or auto-fix.</p>
+          )}
+          {priority === "INFORMATIONAL" && (
+            <p className="text-xs text-sky-600 dark:text-sky-400">
+              For things to be aware of rather than things to do. Never counts as a
+              conflict, and the scheduler neither moves it nor works around it.
+            </p>
           )}
         </div>
 

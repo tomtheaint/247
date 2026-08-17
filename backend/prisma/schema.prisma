@@ -53,6 +53,10 @@ enum Priority {
   HIGH
   NORMAL
   LOW
+  // Something to be aware of rather than something to do: a birthday, a
+  // deadline someone else owns, a conference happening elsewhere. Sits on the
+  // calendar and never counts as a clash, so it does not push real work around.
+  INFORMATIONAL
 }
 
 model User {

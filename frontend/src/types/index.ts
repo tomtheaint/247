@@ -56,7 +56,7 @@ export interface Goal {
   completedEventsCount?: number;
 }
 
-export type Priority = "HIGH" | "NORMAL" | "LOW";
+export type Priority = "HIGH" | "NORMAL" | "LOW" | "INFORMATIONAL";
 
 export interface CalendarEvent {
   id: string;

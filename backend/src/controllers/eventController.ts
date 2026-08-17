@@ -19,7 +19,7 @@ const eventSchema = z.object({
   goalId: z.string().optional(),
   isRecurring: z.boolean().optional(),
   recurrence: z.record(z.unknown()).nullable().optional(),
-  priority: z.enum(["HIGH", "NORMAL", "LOW"]).optional(),
+  priority: z.enum(["HIGH", "NORMAL", "LOW", "INFORMATIONAL"]).optional(),
 });
 
 export async function listRecurringEvents(req: AuthRequest, res: Response, next: NextFunction) {

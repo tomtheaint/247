@@ -287,6 +287,7 @@ export function CalendarPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<CalendarEvent | null>(null);
   const [defaultStart, setDefaultStart] = useState<Date | undefined>();
+  const [defaultEnd, setDefaultEnd] = useState<Date | undefined>();
 
   // Pending drag-drop for recurring events (shows "move all" vs "move this one" dialog)
   const [pendingDrop, setPendingDrop] = useState<{ event: RBCEvent; start: Date; end: Date } | null>(null);
@@ -572,13 +573,19 @@ export function CalendarPage() {
     }
   };
 
-  const handleSelectSlot = ({ start }: { start: Date }) => {
+  const handleSelectSlot = ({ start, end, action }: { start: Date; end: Date; action?: string }) => {
     setEditing(null);
     setDefaultStart(start);
+    // A drag says how long the event is; the end was being thrown away here, so
+    // dragging 8am-1pm opened a form that said 8am-9am. A plain click carries an
+    // `end` too — one slot later — but it is an artefact of where you clicked
+    // rather than a duration you chose, so only a drag gets to set one.
+    setDefaultEnd(action === "select" && end > start ? end : undefined);
     setModalOpen(true);
   };
 
   const handleSelectEvent = (e: RBCEvent) => {
+    setDefaultEnd(undefined);
     // Holidays are display-only — no modal
     if (e.id.startsWith("holiday_")) return;
 
@@ -869,6 +876,7 @@ export function CalendarPage() {
         onSnooze={handleSnooze}
         event={editing}
         defaultStart={defaultStart}
+        defaultEnd={defaultEnd}
       />
 
       {pendingDrop && (

@@ -4,6 +4,21 @@ interface SlimEvent {
   endTime: Date;
   goalId: string | null;
   isLocked?: boolean;
+  priority?: string | null;
+}
+
+/**
+ * An event that is on the calendar to be seen, not to be done.
+ *
+ * It never clashes with anything and nothing clashes with it, in both
+ * directions: an all-day "Dad's birthday" that only counted as a conflict for
+ * the eight meetings underneath it would be worse than not being able to record
+ * it at all. For the same reason the schedulers below do not treat one as
+ * occupied space — refusing to book work during a birthday would make it a
+ * commitment, which is exactly what it is not.
+ */
+export function isInformational(event: SlimEvent): boolean {
+  return event.priority === "INFORMATIONAL";
 }
 
 interface UserPrefs {
@@ -68,16 +83,17 @@ export function conflictsWithSleep(event: SlimEvent, prefs: UserPrefs, tzOffsetM
  */
 export function detectConflicts(events: SlimEvent[], prefs: UserPrefs, tzOffsetMinutes = 0): Set<string> {
   const conflicted = new Set<string>();
+  const real = events.filter((e) => !isInformational(e));
 
-  for (const ev of events) {
+  for (const ev of real) {
     if (conflictsWithSleep(ev, prefs, tzOffsetMinutes)) conflicted.add(ev.id);
   }
 
-  for (let i = 0; i < events.length; i++) {
-    for (let j = i + 1; j < events.length; j++) {
-      if (overlaps(events[i], events[j])) {
-        conflicted.add(events[i].id);
-        conflicted.add(events[j].id);
+  for (let i = 0; i < real.length; i++) {
+    for (let j = i + 1; j < real.length; j++) {
+      if (overlaps(real[i], real[j])) {
+        conflicted.add(real[i].id);
+        conflicted.add(real[j].id);
       }
     }
   }
@@ -107,7 +123,7 @@ export function findAlternativeSlot(
   maxDaysAhead = 7,
 ): { startTime: Date; endTime: Date } | null {
   const chronoOrder = CHRONOTYPE_ORDER[prefs.chronotype] ?? CHRONOTYPE_ORDER.MID_DAY;
-  const others = allEvents.filter((e) => e.id !== event.id);
+  const others = allEvents.filter((e) => e.id !== event.id && !isInformational(e));
   const originalLocalHour = getLocalHour(event.startTime, tzOffsetMinutes);
 
   for (let dayOffset = 0; dayOffset <= maxDaysAhead; dayOffset++) {
