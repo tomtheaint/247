@@ -68,6 +68,8 @@ export interface CalendarEvent {
   color?: string;
   isLocked: boolean;
   priority?: Priority;
+  /** Set on events expanded from a provider's recurring series, e.g. Google. */
+  externalSeriesId?: string | null;
   isRecurring?: boolean;
   recurringParentId?: string;
   recurrence?: Record<string, unknown> | null;

@@ -143,6 +143,44 @@ export async function updateEvent(req: AuthRequest, res: Response, next: NextFun
   }
 }
 
+/**
+ * Apply a change to every event imported from the same provider series.
+ *
+ * Google is asked for `singleEvents`, which expands a recurring event into one
+ * row per occurrence — so a fortnightly pay day is a dozen separate events and
+ * marking it informational meant doing so a dozen times, then again after every
+ * sync brought more.
+ *
+ * Only the fields that make sense across a whole series: times are per
+ * occurrence by definition, and applying one occurrence's times to all of them
+ * would collapse the series onto a single day.
+ */
+export async function updateSeries(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const existing = await prisma.event.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
+    if (!existing) throw new AppError("Event not found", 404);
+    if (!existing.externalSeriesId) throw new AppError("This event is not part of an imported series", 400);
+
+    const body = z.object({
+      title: z.string().min(1).optional(),
+      description: z.string().nullable().optional(),
+      color: z.string().nullable().optional(),
+      priority: z.enum(["HIGH", "NORMAL", "LOW", "INFORMATIONAL"]).optional(),
+      isLocked: z.boolean().optional(),
+    }).parse(req.body);
+
+    if (Object.keys(body).length === 0) throw new AppError("Nothing to change", 400);
+
+    const { count } = await prisma.event.updateMany({
+      where: { userId: req.user!.id, externalSeriesId: existing.externalSeriesId },
+      data: body,
+    });
+    res.json({ updated: count, seriesId: existing.externalSeriesId });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function detachInstance(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { originalStart, newStart, newEnd } = z.object({

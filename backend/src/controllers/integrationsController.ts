@@ -69,6 +69,45 @@ function isAbsoluteHttpUrl(value: string): boolean {
   }
 }
 
+/**
+ * What a timezone's offset from UTC is at a given instant, in milliseconds.
+ *
+ * Via Intl because there is no timezone library here and this is the only place
+ * that needs one. Formatting an instant into the zone and reading the wall clock
+ * back out gives the offset, DST included, without a table to keep up to date.
+ */
+export function zoneOffsetMs(at: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(at);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)!.value);
+  // `hour12: false` renders midnight as 24 in some environments.
+  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+  return asUtc - at.getTime();
+}
+
+/**
+ * Midnight on a Google all-day date, in the calendar owner's own timezone.
+ *
+ * Google sends all-day events as a bare "2026-08-27", and `new Date()` reads
+ * that as midnight UTC — which is 7pm the evening before in Chicago. That is
+ * why an all-day event arrived here as a block running 7pm to 7pm across two
+ * days: not one bug but the same bug twice, once at each end.
+ *
+ * Resolved twice on purpose. The first pass uses the offset at the wrong
+ * instant, which is a different offset on the two days a year the clocks move,
+ * and re-resolving with the corrected instant lands on the right side.
+ */
+export function zonedMidnight(dateOnly: string, timeZone: string): Date {
+  const [y, m, d] = dateOnly.split("-").map(Number);
+  const wallClock = Date.UTC(y, m - 1, d, 0, 0, 0);
+  let ts = wallClock;
+  for (let pass = 0; pass < 2; pass++) ts = wallClock - zoneOffsetMs(new Date(ts), timeZone);
+  return new Date(ts);
+}
+
 function googleOAuthClient() {
   const { OAuth2Client } = require("google-auth-library");
   return new OAuth2Client(
@@ -187,9 +226,14 @@ export async function googleCallback(req: AuthRequest, res: Response, next: Next
 
 export async function googleSync(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const integration = await prisma.calendarIntegration.findUnique({
-      where: { userId_provider: { userId: req.user!.id, provider: "google" } },
-    });
+    const [integration, user] = await Promise.all([
+      prisma.calendarIntegration.findUnique({
+        where: { userId_provider: { userId: req.user!.id, provider: "google" } },
+      }),
+      // Needed to read all-day dates, which are days in this person's timezone
+      // rather than instants.
+      prisma.user.findUnique({ where: { id: req.user!.id }, select: { timezone: true } }),
+    ]);
     if (!integration) throw new AppError("Google Calendar not connected", 404);
 
     const client = googleOAuthClient();
@@ -214,16 +258,28 @@ export async function googleSync(req: AuthRequest, res: Response, next: NextFunc
     });
 
     const gEvents = (data.items ?? []) as Array<{
-      id: string; summary?: string; description?: string;
+      id: string; summary?: string; description?: string; recurringEventId?: string;
       start?: { dateTime?: string; date?: string };
       end?: { dateTime?: string; date?: string };
     }>;
 
+    const timeZone = user?.timezone || "America/New_York";
+
     let imported = 0;
     for (const ge of gEvents) {
       if (!ge.start?.dateTime && !ge.start?.date) continue;
-      const startTime = new Date(ge.start.dateTime ?? ge.start.date!);
-      const endTime = new Date((ge.end?.dateTime ?? ge.end?.date) ? (ge.end!.dateTime ?? ge.end!.date!) : startTime.getTime() + 3600000);
+
+      // A date with no time is a day in the owner's calendar, not an instant.
+      const allDay = !ge.start.dateTime;
+      const startTime = allDay
+        ? zonedMidnight(ge.start.date!, timeZone)
+        : new Date(ge.start.dateTime!);
+      const endTime = allDay
+        // Google's end.date is exclusive — a single all-day event on the 27th
+        // is sent as 27th to 28th — so this is already the right instant, and
+        // the fallback covers a provider that omits it entirely.
+        ? (ge.end?.date ? zonedMidnight(ge.end.date, timeZone) : new Date(startTime.getTime() + 86400000))
+        : new Date(ge.end?.dateTime ?? ge.end?.date ?? startTime.getTime() + 3600000);
 
       await prisma.event.upsert({
         where: { id: `google_${ge.id}` },
@@ -233,11 +289,21 @@ export async function googleSync(req: AuthRequest, res: Response, next: NextFunc
           description: ge.description,
           startTime,
           endTime,
-          allDay: !ge.start.dateTime,
+          allDay,
           userId: req.user!.id,
           color: "#34a853",
+          externalSeriesId: ge.recurringEventId ?? null,
+          // An all-day event is a fact about the day, not a claim on it: a pay
+          // day, a birthday, someone's leave. Treating one as a commitment made
+          // every appointment underneath it a conflict, which is both wrong and
+          // loud. Only on create — a later change of mind is the user's, and a
+          // sync must not undo it.
+          ...(allDay ? { priority: "INFORMATIONAL" as const } : {}),
         },
-        update: { title: ge.summary ?? "(No title)", startTime, endTime },
+        // Deliberately narrow. Everything absent here is something the user may
+        // have changed on this side, and a sync that reasserts the provider's
+        // version would quietly discard it every time it ran.
+        update: { title: ge.summary ?? "(No title)", startTime, endTime, allDay, externalSeriesId: ge.recurringEventId ?? null },
       });
       imported++;
     }

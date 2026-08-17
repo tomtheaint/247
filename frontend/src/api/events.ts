@@ -15,6 +15,11 @@ export const eventsApi = {
 
   update: (id: string, data: Partial<CalendarEvent> & { deltaMs?: number }) =>
     client.patch<CalendarEvent>(`/events/${id}`, data).then((r) => r.data),
+  /** Apply the fields that make sense series-wide to every imported occurrence. */
+  updateSeries: (
+    id: string,
+    data: Pick<Partial<CalendarEvent>, "title" | "description" | "color" | "priority" | "isLocked">,
+  ) => client.patch<{ updated: number; seriesId: string }>(`/events/${id}/series`, data).then((r) => r.data),
 
   detachInstance: (parentId: string, originalStart: string, newStart: string, newEnd: string) =>
     client.post<CalendarEvent>(`/events/${parentId}/detach-instance`, { originalStart, newStart, newEnd }).then((r) => r.data),

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/auth";
-import { listEvents, listRecurringEvents, getEvent, createEvent, updateEvent, detachInstance, deleteEvent, deleteAllEvents } from "../controllers/eventController";
+import { listEvents, listRecurringEvents, getEvent, createEvent, updateEvent, updateSeries, detachInstance, deleteEvent, deleteAllEvents } from "../controllers/eventController";
 
 const router = Router();
 router.use(authenticate);
@@ -11,6 +11,7 @@ router.post("/", createEvent);
 router.delete("/", deleteAllEvents);
 router.get("/:id", getEvent);
 router.patch("/:id", updateEvent);
+router.patch("/:id/series", updateSeries);
 router.post("/:id/detach-instance", detachInstance);
 router.delete("/:id", deleteEvent);
 

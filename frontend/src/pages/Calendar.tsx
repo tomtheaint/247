@@ -641,11 +641,24 @@ export function CalendarPage() {
     }
   };
 
-  const handleSave = async (data: Partial<CalendarEvent>) => {
+  const handleSave = async (data: Partial<CalendarEvent>, opts?: { applyToSeries?: boolean }) => {
     try {
       if (editing) {
         await update(editing.id, data);
-        toast.success("Event updated");
+        if (opts?.applyToSeries && editing.externalSeriesId) {
+          // The occurrence keeps its own times; everything else spreads. Sent
+          // after the single update so the series value wins where they differ.
+          const { updated } = await eventsApi.updateSeries(editing.id, {
+            title: data.title,
+            description: data.description,
+            color: data.color,
+            priority: data.priority,
+            isLocked: data.isLocked,
+          });
+          toast.success(`Updated ${updated} event${updated === 1 ? "" : "s"} in the series`);
+        } else {
+          toast.success("Event updated");
+        }
       } else {
         await create(data);
         toast.success("Event created");

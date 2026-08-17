@@ -33,7 +33,7 @@ interface FormData {
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (data: Partial<CalendarEvent>) => Promise<void>;
+  onSave: (data: Partial<CalendarEvent>, opts?: { applyToSeries?: boolean }) => Promise<void>;
   onDelete?: (id: string) => Promise<void>;
   onSnooze?: (id: string) => Promise<void>;
   event?: CalendarEvent | null;
@@ -61,6 +61,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
   const recurDaysFilter = watch("recurDaysFilter");
   const isLocked = watch("isLocked");
   const priority = watch("priority");
+  const [applyToSeries, setApplyToSeries] = useState(false);
 
   useEffect(() => {
     setConfirmingDelete(false);
@@ -101,6 +102,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
         recurEndDate: "",
       });
     }
+    setApplyToSeries(false);
   }, [event, defaultStart, defaultEnd, reset]);
 
   // Quick duration: sets endTime relative to current startTime
@@ -138,7 +140,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
       goalId: data.goalId || undefined,
       isRecurring: data.recurFreq !== "none",
       recurrence,
-    });
+    }, { applyToSeries });
     onClose();
   };
 
@@ -246,6 +248,23 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
           </div>
           {priority === "HIGH" && (
             <p className="text-xs text-red-600 dark:text-red-400">High priority events won't be moved by the optimizer or auto-fix.</p>
+          )}
+          {event?.externalSeriesId && (
+            <label className="flex items-start gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-2.5">
+              <input
+                type="checkbox"
+                checked={applyToSeries}
+                onChange={(e) => setApplyToSeries(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span className="text-xs text-gray-600 dark:text-gray-400">
+                <span className="font-medium text-gray-700 dark:text-gray-300">Apply to the whole series.</span>{" "}
+                This came from a repeating event on your connected calendar, which
+                imports as one entry per occurrence. Ticking this applies the title,
+                notes, colour, priority and lock to all of them — each keeps its own
+                date and time.
+              </span>
+            </label>
           )}
           {priority === "INFORMATIONAL" && (
             <p className="text-xs text-sky-600 dark:text-sky-400">

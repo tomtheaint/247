@@ -158,8 +158,15 @@ model Event {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   trackStepId String?
   trackStep   TrackStep? @relation(fields: [trackStepId], references: [id], onDelete: SetNull)
+  // The provider's id for the recurring series this was expanded from. Google
+  // is asked for `singleEvents`, so a fortnightly pay day arrives as a dozen
+  // unrelated rows; this is the only thing tying them back together, and
+  // without it every occurrence has to be edited on its own.
+  externalSeriesId String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  @@index([userId, externalSeriesId])
 }
 
 model Track {
