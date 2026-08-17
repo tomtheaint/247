@@ -1,4 +1,4 @@
-interface RecurrenceRule {
+export interface RecurrenceRule {
   freq: "daily" | "weekly" | "monthly";
   interval?: number;
   daysOfWeek?: number[]; // 0=Sun … 6=Sat

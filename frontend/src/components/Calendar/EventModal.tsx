@@ -23,6 +23,7 @@ interface FormData {
   allDay: boolean;
   isLocked: boolean;
   priority: Priority;
+  syncToGoogle: boolean;
   recurFreq: RecurFreq;
   recurInterval: number;
   recurDays: number[];
@@ -39,6 +40,7 @@ interface Props {
   event?: CalendarEvent | null;
   defaultStart?: Date;
   defaultEnd?: Date;
+  googleConnected?: boolean;
 }
 
 function toDatetimeLocal(iso: string) {
@@ -47,7 +49,7 @@ function toDatetimeLocal(iso: string) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, defaultStart, defaultEnd }: Props) {
+export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, defaultStart, defaultEnd, googleConnected }: Props) {
   const { goals } = useGoalStore();
   const [snoozing, setSnoozing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -61,6 +63,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
   const recurDaysFilter = watch("recurDaysFilter");
   const isLocked = watch("isLocked");
   const priority = watch("priority");
+  const syncToGoogle = watch("syncToGoogle");
   const [applyToSeries, setApplyToSeries] = useState(false);
 
   useEffect(() => {
@@ -76,6 +79,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
         allDay: event.allDay,
         isLocked: event.isLocked ?? false,
         priority: (event.priority as Priority) ?? "NORMAL",
+        syncToGoogle: event.syncToGoogle ?? false,
         recurFreq: (rec?.freq as RecurFreq) ?? "none",
         recurInterval: rec?.interval ?? 1,
         recurDays: rec?.daysOfWeek ?? [],
@@ -100,6 +104,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
         recurDays: [],
         recurDaysFilter: "all",
         recurEndDate: "",
+        syncToGoogle: false,
       });
     }
     setApplyToSeries(false);
@@ -137,6 +142,7 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
       allDay: data.allDay,
       isLocked: data.isLocked,
       priority: data.priority,
+      syncToGoogle: data.syncToGoogle,
       goalId: data.goalId || undefined,
       isRecurring: data.recurFreq !== "none",
       recurrence,
@@ -248,6 +254,18 @@ export function EventModal({ open, onClose, onSave, onDelete, onSnooze, event, d
           </div>
           {priority === "HIGH" && (
             <p className="text-xs text-red-600 dark:text-red-400">High priority events won't be moved by the optimizer or auto-fix.</p>
+          )}
+          {googleConnected && !event?.id?.startsWith("google_") && !event?.id?.startsWith("ms_") && (
+            <label className="flex items-start gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-2.5">
+              <input type="checkbox" {...register("syncToGoogle")} className="mt-0.5" />
+              <span className="text-xs text-gray-600 dark:text-gray-400">
+                <span className="font-medium text-gray-700 dark:text-gray-300">Show on Google Calendar.</span>{" "}
+                Copies this event to your connected Google calendar and keeps it
+                up to date as you change it here. 247 is the original — edits made
+                in Google are replaced on the next change. Unticking removes the copy.
+                {syncToGoogle && event?.googleEventId ? " Currently mirrored." : ""}
+              </span>
+            </label>
           )}
           {event?.externalSeriesId && (
             <label className="flex items-start gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-2.5">

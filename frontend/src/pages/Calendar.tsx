@@ -12,6 +12,7 @@ import { EventModal } from "../components/Calendar/EventModal";
 import { schedulingApi } from "../api/scheduling";
 import { eventsApi } from "../api/events";
 import { usersApi } from "../api/users";
+import { integrationsApi } from "../api/integrations";
 import type { CalendarEvent } from "../types";
 
 import "react-big-calendar/lib/css/react-big-calendar.css";
@@ -288,6 +289,7 @@ export function CalendarPage() {
   const [editing, setEditing] = useState<CalendarEvent | null>(null);
   const [defaultStart, setDefaultStart] = useState<Date | undefined>();
   const [defaultEnd, setDefaultEnd] = useState<Date | undefined>();
+  const [googleConnected, setGoogleConnected] = useState(false);
 
   // Pending drag-drop for recurring events (shows "move all" vs "move this one" dialog)
   const [pendingDrop, setPendingDrop] = useState<{ event: RBCEvent; start: Date; end: Date } | null>(null);
@@ -359,6 +361,15 @@ export function CalendarPage() {
   useEffect(() => {
     fetchGoals();
   }, [fetchGoals]);
+
+  useEffect(() => {
+    // Whether to offer "show on Google Calendar" at all. A switch that cannot
+    // do anything is worse than its absence: it looks broken rather than
+    // unavailable.
+    integrationsApi.list()
+      .then((list) => setGoogleConnected(list.some((i) => i.provider === "google")))
+      .catch(() => setGoogleConnected(false));
+  }, []);
 
   useEffect(() => {
     // Fetch showHolidays preference (auth/me doesn't include it)
@@ -643,8 +654,15 @@ export function CalendarPage() {
 
   const handleSave = async (data: Partial<CalendarEvent>, opts?: { applyToSeries?: boolean }) => {
     try {
+      // Carries `googleSync` when a mirror was attempted: pushed, removed,
+      // skipped or failed. Reported rather than swallowed — a switch that
+      // quietly did nothing is worse than one that is not there.
+      let push: { status: string; reason?: string } | undefined;
+
       if (editing) {
-        await update(editing.id, data);
+        const saved = await eventsApi.update(editing.id, data);
+        push = (saved as unknown as { googleSync?: { status: string; reason?: string } }).googleSync;
+
         if (opts?.applyToSeries && editing.externalSeriesId) {
           // The occurrence keeps its own times; everything else spreads. Sent
           // after the single update so the series value wins where they differ.
@@ -660,9 +678,17 @@ export function CalendarPage() {
           toast.success("Event updated");
         }
       } else {
-        await create(data);
+        const saved = await create(data);
+        push = (saved as unknown as { googleSync?: { status: string; reason?: string } }).googleSync;
         toast.success("Event created");
       }
+
+      if (push?.status === "failed") {
+        toast.error(`Saved here, but Google refused it: ${push.reason ?? "unknown error"}`);
+      } else if (push?.status === "skipped" && push.reason) {
+        toast.error(`Saved here, but not sent to Google: ${push.reason}`);
+      }
+
       // Always reload so recurring instances are re-expanded at their new times
       await loadEvents(date);
       await checkConflicts();
@@ -890,6 +916,7 @@ export function CalendarPage() {
         event={editing}
         defaultStart={defaultStart}
         defaultEnd={defaultEnd}
+        googleConnected={googleConnected}
       />
 
       {pendingDrop && (

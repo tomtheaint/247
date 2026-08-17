@@ -4,6 +4,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import { AuthRequest } from "../types";
 import { AppError } from "../middleware/errorHandler";
 import { expandRecurring } from "../utils/recurrence";
+import { syncEventToGoogle, removeEventFromGoogle } from "../services/googlePush";
 
 const prisma = new PrismaClient();
 
@@ -20,6 +21,7 @@ const eventSchema = z.object({
   isRecurring: z.boolean().optional(),
   recurrence: z.record(z.unknown()).nullable().optional(),
   priority: z.enum(["HIGH", "NORMAL", "LOW", "INFORMATIONAL"]).optional(),
+  syncToGoogle: z.boolean().optional(),
 });
 
 export async function listRecurringEvents(req: AuthRequest, res: Response, next: NextFunction) {
@@ -111,7 +113,11 @@ export async function createEvent(req: AuthRequest, res: Response, next: NextFun
       data: { ...body, userId: req.user!.id, recurrence: (body.recurrence ?? undefined) as Prisma.InputJsonValue | undefined },
       include: { goal: { select: { id: true, title: true, color: true, icon: true } } },
     });
-    res.status(201).json(event);
+    // Awaited, not fired and forgotten: the response carries whether the mirror
+    // worked, and a toggle that silently did nothing is worse than no toggle.
+    // syncEventToGoogle never throws, so this cannot fail the save.
+    const push = event.syncToGoogle ? await syncEventToGoogle(req.user!.id, event) : undefined;
+    res.status(201).json({ ...event, googleSync: push });
   } catch (err) {
     next(err);
   }
@@ -137,7 +143,13 @@ export async function updateEvent(req: AuthRequest, res: Response, next: NextFun
       data,
       include: { goal: { select: { id: true, title: true, color: true, icon: true } } },
     });
-    res.json(event);
+    // Also when it has just been switched off, which is the call that withdraws
+    // the copy — skipping that would leave an orphan in Google contradicting the
+    // toggle that claims to control it.
+    const push = (event.syncToGoogle || event.googleEventId)
+      ? await syncEventToGoogle(req.user!.id, event)
+      : undefined;
+    res.json({ ...event, googleSync: push });
   } catch (err) {
     next(err);
   }
@@ -166,6 +178,7 @@ export async function updateSeries(req: AuthRequest, res: Response, next: NextFu
       description: z.string().nullable().optional(),
       color: z.string().nullable().optional(),
       priority: z.enum(["HIGH", "NORMAL", "LOW", "INFORMATIONAL"]).optional(),
+  syncToGoogle: z.boolean().optional(),
       isLocked: z.boolean().optional(),
     }).parse(req.body);
 
@@ -233,6 +246,9 @@ export async function deleteEvent(req: AuthRequest, res: Response, next: NextFun
   try {
     const existing = await prisma.event.findFirst({ where: { id: req.params.id, userId: req.user!.id } });
     if (!existing) throw new AppError("Event not found", 404);
+    // Before the row goes: afterwards there is nothing left to say which Google
+    // event this was.
+    await removeEventFromGoogle(req.user!.id, existing.googleEventId);
     await prisma.event.delete({ where: { id: req.params.id } });
     res.status(204).send();
   } catch (err) {

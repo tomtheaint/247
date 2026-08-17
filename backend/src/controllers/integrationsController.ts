@@ -265,9 +265,26 @@ export async function googleSync(req: AuthRequest, res: Response, next: NextFunc
 
     const timeZone = user?.timezone || "America/New_York";
 
+    /*
+     * The events on Google that are this app's own reflection.
+     *
+     * Without this, a pull re-imports everything the push just wrote: the copy
+     * comes back with a Google id, gets stored as a second event under
+     * `google_<id>`, and every mirrored event silently becomes two — which then
+     * conflict with each other.
+     */
+    const mirrored = new Set(
+      (await prisma.event.findMany({
+        where: { userId: req.user!.id, googleEventId: { not: null } },
+        select: { googleEventId: true },
+      })).map((e) => e.googleEventId!),
+    );
+
     let imported = 0;
+    let skippedOwn = 0;
     for (const ge of gEvents) {
       if (!ge.start?.dateTime && !ge.start?.date) continue;
+      if (mirrored.has(ge.id)) { skippedOwn++; continue; }
 
       // A date with no time is a day in the owner's calendar, not an instant.
       const allDay = !ge.start.dateTime;
@@ -332,7 +349,7 @@ export async function googleSync(req: AuthRequest, res: Response, next: NextFunc
       data: { priority: "INFORMATIONAL" },
     });
 
-    res.json({ synced: imported, relabelled });
+    res.json({ synced: imported, relabelled, skippedOwn });
   } catch (err) { next(err); }
 }
 

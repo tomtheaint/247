@@ -70,6 +70,10 @@ export interface CalendarEvent {
   priority?: Priority;
   /** Set on events expanded from a provider's recurring series, e.g. Google. */
   externalSeriesId?: string | null;
+  /** Mirror this event onto the connected Google calendar. */
+  syncToGoogle?: boolean;
+  /** Set once a mirrored copy exists in Google. */
+  googleEventId?: string | null;
   isRecurring?: boolean;
   recurringParentId?: string;
   recurrence?: Record<string, unknown> | null;

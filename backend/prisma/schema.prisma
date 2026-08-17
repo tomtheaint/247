@@ -163,6 +163,13 @@ model Event {
   // unrelated rows; this is the only thing tying them back together, and
   // without it every occurrence has to be edited on its own.
   externalSeriesId String?
+  // Mirror this event onto the connected Google calendar. Opt-in per event
+  // rather than wholesale: the optimiser moves goal sessions around constantly,
+  // and a real calendar that churns every time it runs is one people turn off.
+  syncToGoogle Boolean @default(false)
+  // The id Google gave the copy, so later edits update it rather than making
+  // another, and so the pull can recognise its own reflection and skip it.
+  googleEventId String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
