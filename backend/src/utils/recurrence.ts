@@ -31,16 +31,59 @@ export function expandRecurring(
   const instances: ExpandedInstance[] = [];
   const interval = rule.interval ?? 1;
   const durationMs = event.endTime.getTime() - event.startTime.getTime();
-  const hardEnd = rule.endDate ? new Date(rule.endDate) : rangeEnd;
+  /*
+   * "Ends on the 3rd" includes the 3rd.
+   *
+   * A bare date parses as midnight, so an occurrence at any time of day on the
+   * final date was past the end and dropped — a series that visibly stopped one
+   * occurrence early, and only for people who end a rule on a day it falls on.
+   */
+  const hardEnd = rule.endDate
+    ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(rule.endDate) ? `${rule.endDate}T23:59:59.999Z` : rule.endDate)
+    : rangeEnd;
   const maxCount = rule.count ?? 500;
 
-  let cursor = new Date(event.startTime);
-  let count = 0;
+  /*
+   * A weekly rule with several days on it has to be walked a day at a time.
+   *
+   * Stepping a week at a time only ever lands on the weekday the series began
+   * on, so the other days in `daysOfWeek` were never even examined: "every week
+   * on Tue, Wed, Thu and Fri" quietly meant "every Tuesday". The rule was
+   * stored correctly and displayed correctly; only the expansion disagreed,
+   * which is why it could go unnoticed.
+   */
+  const weeklyByDay = rule.freq === "weekly" && !!rule.daysOfWeek?.length;
+  /*
+   * Which week a moment falls in, counted from the week the series started.
+   *
+   * Anchored to a Sunday rather than to the epoch: dividing the timestamp by
+   * seven days puts the boundary on a Thursday, because 1 January 1970 was one.
+   * Monday and Friday of the same calendar week then land in different "weeks",
+   * so every other week on Mon and Fri came out as alternating single days.
+   */
+  const weekStart = (d: Date) => {
+    const x = new Date(d.getTime());
+    x.setHours(0, 0, 0, 0);
+    x.setDate(x.getDate() - x.getDay());
+    return x.getTime();
+  };
+  const anchorWeek = weekStart(event.startTime);
+  const weeksSince = (d: Date) => Math.round((weekStart(d) - anchorWeek) / (7 * 86400000));
 
-  while (cursor <= hardEnd && cursor <= rangeEnd && count < maxCount) {
+  let cursor = new Date(event.startTime);
+  let produced = 0;
+  // Walking daily needs its own stop, since `count` now counts occurrences
+  // rather than steps and a long range would otherwise spin.
+  let steps = 0;
+  const maxSteps = 4000;
+
+  while (cursor <= hardEnd && cursor <= rangeEnd && produced < maxCount && steps < maxSteps) {
+    steps++;
     const inRange = cursor >= rangeStart && cursor <= rangeEnd;
     const dow = cursor.getDay();
+    const onInterval = weeklyByDay ? weeksSince(cursor) % interval === 0 : true;
     const dayMatch =
+      onInterval &&
       (rule.freq !== "weekly" || !rule.daysOfWeek?.length || rule.daysOfWeek.includes(dow)) &&
       (!rule.daysFilter || rule.daysFilter === "all" ||
         (rule.daysFilter === "weekdays" && dow >= 1 && dow <= 5) ||
@@ -55,10 +98,13 @@ export function expandRecurring(
         endTime: new Date(cursor.getTime() + durationMs),
         recurringParentId: event.id,
       });
+      produced++;
     }
 
     // Advance cursor
-    if (rule.freq === "daily") {
+    if (weeklyByDay) {
+      cursor = new Date(cursor.getTime() + 86400000);
+    } else if (rule.freq === "daily") {
       cursor = new Date(cursor.getTime() + interval * 86400000);
     } else if (rule.freq === "weekly") {
       cursor = new Date(cursor.getTime() + interval * 7 * 86400000);
@@ -67,7 +113,6 @@ export function expandRecurring(
       next.setMonth(next.getMonth() + interval);
       cursor = next;
     }
-    count++;
   }
 
   return instances;

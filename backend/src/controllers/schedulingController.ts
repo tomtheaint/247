@@ -14,14 +14,14 @@ const prisma = new PrismaClient();
  * so callers can identify which parent template is responsible for each conflict.
  */
 function buildRecurInstances(
-  recurringEvents: { id: string; startTime: Date; endTime: Date; recurrence: unknown; isLocked?: boolean; goalId?: string | null }[],
+  recurringEvents: { id: string; startTime: Date; endTime: Date; recurrence: unknown; isLocked?: boolean; goalId?: string | null; priority?: string | null }[],
   rangeStart: Date,
   rangeEnd: Date,
 ): {
-  instances: { id: string; startTime: Date; endTime: Date; isLocked: boolean; goalId: string | null }[];
+  instances: { id: string; startTime: Date; endTime: Date; isLocked: boolean; goalId: string | null; priority: string | null }[];
   parentMap: Map<string, string>; // pseudoId → parentEventId
 } {
-  const instances: { id: string; startTime: Date; endTime: Date; isLocked: boolean; goalId: string | null }[] = [];
+  const instances: { id: string; startTime: Date; endTime: Date; isLocked: boolean; goalId: string | null; priority: string | null }[] = [];
   const parentMap = new Map<string, string>();
   let idx = 0;
   for (const ev of recurringEvents) {
@@ -33,7 +33,13 @@ function buildRecurInstances(
     for (const inst of expanded) {
       const pseudoId = `__recur_${idx++}__`;
       parentMap.set(pseudoId, ev.id);
-      instances.push({ id: pseudoId, startTime: inst.startTime, endTime: inst.endTime, isLocked: ev.isLocked ?? false, goalId: ev.goalId ?? null });
+      // Carried through expansion. Without it an informational *recurring*
+      // event produced instances that all looked ordinary, so the priority
+      // applied to everything except the occurrences anyone actually sees.
+      instances.push({
+        id: pseudoId, startTime: inst.startTime, endTime: inst.endTime,
+        isLocked: ev.isLocked ?? false, goalId: ev.goalId ?? null, priority: ev.priority ?? null,
+      });
     }
   }
   return { instances, parentMap };
@@ -251,12 +257,20 @@ export async function getConflicts(req: AuthRequest, res: Response, next: NextFu
     // intervals, which can shift an hour locally across DST transitions.
     const overlappingRecurParentIds = new Set<string>();
     const conflictedRecurringInstances: Array<{ parentId: string; startTime: string }> = [];
-    for (const inst of recurInstances) {
+    // Filtered on both sides, deliberately.
+    //
+    // This is a second overlap scan that never passes through detectConflicts,
+    // so the informational rule did not reach it at all: an all-day pay day
+    // marked informational still flagged every repeating appointment on its
+    // day, because those are matched here and nowhere else. The events being
+    // scanned are filtered too, so an informational series is not flagged by
+    // its own occurrences.
+    for (const inst of realRecurInstances) {
       const parentId = parentMap.get(inst.id);
       if (!parentId) continue;
       const hasOverlap =
-        nonRecurring.some((nr) => inst.startTime < nr.endTime && inst.endTime > nr.startTime) ||
-        recurInstances.some((other) => other.id !== inst.id && inst.startTime < other.endTime && inst.endTime > other.startTime);
+        realNonRecurring.some((nr) => inst.startTime < nr.endTime && inst.endTime > nr.startTime) ||
+        realRecurInstances.some((other) => other.id !== inst.id && inst.startTime < other.endTime && inst.endTime > other.startTime);
       if (hasOverlap) {
         overlappingRecurParentIds.add(parentId);
         conflictedRecurringInstances.push({ parentId, startTime: inst.startTime.toISOString() });

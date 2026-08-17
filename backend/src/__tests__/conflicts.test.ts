@@ -61,6 +61,26 @@ describe("informational events", () => {
     expect(detectConflicts([ev("late", 2, 3)], prefs).has("late")).toBe(true);
   });
 
+  it("does not flag a recurring occurrence it happens to cover", () => {
+    /*
+     * The reported case, and the one the tests above miss entirely.
+     *
+     * A weekly appointment expands into occurrences, and those are matched by a
+     * second overlap scan in the conflicts endpoint rather than by
+     * detectConflicts. Everything here was already correct while the calendar
+     * still went red, because the rule had not reached that scan.
+     */
+    const allDay = {
+      id: "payday",
+      startTime: new Date("2024-06-12T00:00:00Z"),
+      endTime: new Date("2024-06-13T00:00:00Z"),
+      goalId: null,
+      priority: "INFORMATIONAL",
+    };
+    const occurrence = { ...ev("__recur_0__", 9, 3), priority: null };
+    expect(detectConflicts([allDay, occurrence], prefs).size).toBe(0);
+  });
+
   it("is not treated as occupied space when rescheduling", () => {
     // Booking work during a birthday is fine; the birthday is not a commitment.
     const moving = ev("task", 9);
