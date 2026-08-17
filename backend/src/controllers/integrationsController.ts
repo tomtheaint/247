@@ -93,7 +93,16 @@ export async function googleAuthUrl(req: AuthRequest, res: Response, next: NextF
     const client = googleOAuthClient();
     const url = client.generateAuthUrl({
       access_type: "offline",
-      scope: ["https://www.googleapis.com/auth/calendar"],
+      // The callback asks Google who just authorised, and that is a separate
+      // permission from reading their calendar. Requesting only `calendar` got
+      // a token that `oauth2.userinfo.get()` is not allowed to use, so consent
+      // succeeded and the callback then failed with a 500 — the worst place for
+      // it, since by then the user has already clicked Allow.
+      scope: [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/calendar",
+      ],
       state: req.user!.id,
       prompt: "consent",
     });
@@ -110,10 +119,24 @@ export async function googleCallback(req: AuthRequest, res: Response, next: Next
     const { tokens } = await client.getToken(code);
     client.setCredentials(tokens);
 
-    // Get user email from Google
-    const { google } = require("googleapis");
-    const oauth2 = google.oauth2({ version: "v2", auth: client });
-    const { data } = await oauth2.userinfo.get();
+    // Which account this is, for the label on the settings page.
+    //
+    // Not worth failing the connection over. `email` is optional in the schema,
+    // the tokens are the part that does the work, and throwing here discards a
+    // consent the user has already granted — they would have to go round the
+    // whole flow again to fix a missing caption.
+    let email: string | undefined;
+    try {
+      const { google } = require("googleapis");
+      const oauth2 = google.oauth2({ version: "v2", auth: client });
+      const { data } = await oauth2.userinfo.get();
+      email = data.email ?? undefined;
+    } catch (err) {
+      console.warn(
+        "Connected Google Calendar but could not read the account address:",
+        err instanceof Error ? err.message : err,
+      );
+    }
 
     await prisma.calendarIntegration.upsert({
       where: { userId_provider: { userId, provider: "google" } },
@@ -123,13 +146,13 @@ export async function googleCallback(req: AuthRequest, res: Response, next: Next
         accessToken: tokens.access_token!,
         refreshToken: tokens.refresh_token ?? undefined,
         expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
-        email: data.email,
+        email,
       },
       update: {
         accessToken: tokens.access_token!,
         refreshToken: tokens.refresh_token ?? undefined,
         expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
-        email: data.email,
+        email,
       },
     });
 
