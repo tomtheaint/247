@@ -40,8 +40,33 @@ function callbackUrl(provider: "google" | "microsoft"): string {
  * otherwise, because the combined image serves the app from its own origin.
  */
 function settingsOrigin(): string {
-  const base = (process.env.FRONTEND_URL ?? process.env.PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
-  return base || "http://localhost:5173";
+  for (const candidate of [process.env.FRONTEND_URL, process.env.PUBLIC_URL]) {
+    const base = (candidate ?? "").trim().replace(/\/+$/, "");
+    if (isAbsoluteHttpUrl(base)) return base;
+    if (base) {
+      // `FRONTEND_URL=*` is the reason this check exists. It is a reasonable
+      // thing to write for a CORS origin and a meaningless thing to redirect
+      // to: the browser resolved it against the callback path and landed on
+      // /api/integrations/google/*/settings, which is an authenticated route,
+      // so a completed connection ended at "No token provided".
+      console.warn(
+        `Ignoring ${base === process.env.FRONTEND_URL?.trim() ? "FRONTEND_URL" : "PUBLIC_URL"}=` +
+          `"${base}" for the post-connection redirect: it is not an absolute http(s) URL.`,
+      );
+    }
+  }
+  return "http://localhost:5173";
+}
+
+/** A redirect target has to be somewhere a browser can go, not a wildcard. */
+function isAbsoluteHttpUrl(value: string): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function googleOAuthClient() {
