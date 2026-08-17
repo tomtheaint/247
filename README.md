@@ -144,3 +144,34 @@ NODE_ENV=development
 ```
 VITE_API_URL=http://localhost:4000/api
 ```
+
+## Running it as one container
+
+`EMBEDDED_DB=1` runs PostgreSQL inside the app's own container and points the
+API at `127.0.0.1`. One thing to deploy, no private networking to get wrong, and
+no managed database to be in the wrong region of.
+
+```bash
+docker run -e EMBEDDED_DB=1 -e JWT_SECRET=... -e JWT_REFRESH_SECRET=... \
+  -v 247-pgdata:/var/lib/postgresql/data -p 4000:4000 tomtheaint/247:latest
+```
+
+**The volume is not optional.** A container's own filesystem is thrown away when
+the container is replaced, which happens on every deploy and every restart — so
+without a volume mounted at `/var/lib/postgresql/data`, every account, goal and
+review goes with it. On Render that means attaching a Disk with that mount path;
+note that a service with a disk cannot do zero-downtime deploys, because the old
+and new containers cannot hold the same disk at once. The container says so on
+start-up if the path is not a mount, but it says it in a log nobody reads until
+afterwards.
+
+Without `EMBEDDED_DB`, `DATABASE_URL` names a database somewhere else, which is
+what `docker-compose.yml` does locally.
+
+### A note on `prisma db push`
+
+Start-up runs `prisma db push --accept-data-loss`, which reshapes the live
+database to match `schema.prisma` — and the flag means what it says: it will
+drop a column, or a table, to make them match. There is no `prisma/migrations`
+directory yet, which is why. Before this database holds anything worth keeping,
+generate migrations and switch the entrypoint to `prisma migrate deploy`.

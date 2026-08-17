@@ -17,7 +17,13 @@ RUN DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy npx prisma genera
 
 # Stage 3: Production image
 FROM node:20-alpine AS production
-RUN apk add --no-cache openssl
+# postgresql for EMBEDDED_DB=1, su-exec to drop to the postgres user, and
+# busybox's nc/mountpoint for the start-up diagnosis. All small; the image only
+# grows when the embedded mode is actually used, and having it always present
+# means one image can be run either way.
+RUN apk add --no-cache openssl postgresql16 postgresql16-client su-exec \
+ && mkdir -p /var/lib/postgresql/data /run/postgresql \
+ && chown -R postgres:postgres /var/lib/postgresql /run/postgresql
 WORKDIR /app
 COPY --from=backend-builder /app/backend/dist ./dist
 COPY --from=backend-builder /app/backend/node_modules ./node_modules

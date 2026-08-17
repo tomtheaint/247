@@ -1,30 +1,84 @@
 #!/bin/sh
-# Start the API, once the database is actually there.
+# Start the API, and — when asked — the database it talks to.
 #
-# This used to be `until npx prisma db push; do sleep 3; done` inline in the
-# Dockerfile, which had two problems that turned a five-second diagnosis into a
-# five-minute one.
+# Two shapes, one image.
 #
-# It never gave up. A database that is unreachable because of a typo, a wrong
-# region or a deleted instance is not going to become reachable, so the loop
-# spun until the platform's deploy timeout and the only thing in the log was the
-# same error sixty times and the word "Timed Out". Nothing said what was tried
-# or why it might fail.
+# EMBEDDED_DB=1 runs PostgreSQL inside this container and points the app at
+# 127.0.0.1. One thing to deploy, no private networking to get wrong, and no
+# managed database to be in the wrong region of. That is the mode this exists
+# for.
 #
-# So: a bounded wait, and a failure that says what to check. Exiting non-zero
-# means the platform reports *this* error rather than a timeout.
+# Anything else expects DATABASE_URL to name a database somewhere else, which is
+# what docker-compose.yml does locally and what a managed Postgres does in the
+# cloud.
+#
+# The wait used to be `until npx prisma db push; do sleep 3; done` inline in the
+# Dockerfile, which never gave up: a database unreachable because of a wrong
+# host is not going to become reachable, so it spun until the platform's deploy
+# timeout and the log said only "Timed Out".
 set -eu
 
 ATTEMPTS="${DB_WAIT_ATTEMPTS:-20}"
 DELAY="${DB_WAIT_DELAY:-3}"
 
+# ---------------------------------------------------------------- embedded db
+if [ "${EMBEDDED_DB:-0}" = "1" ]; then
+  PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+  DB_USER="${POSTGRES_USER:-app247}"
+  DB_PASS="${POSTGRES_PASSWORD:-secret}"
+  DB_NAME="${POSTGRES_DB:-app247}"
+  export PGDATA
+
+  mkdir -p "$PGDATA"
+  chown -R postgres:postgres "$PGDATA"
+  chmod 0700 "$PGDATA"
+
+  # A container filesystem is thrown away on every deploy. Postgres here is
+  # only a database if what it writes outlives the container, so say so loudly
+  # rather than letting somebody discover it the first time they redeploy with
+  # real data in it.
+  if ! mountpoint -q "$PGDATA" 2>/dev/null; then
+    echo "" >&2
+    echo "WARNING: $PGDATA is not a mounted volume." >&2
+    echo "  Everything this database writes is lost when the container is" >&2
+    echo "  replaced — which happens on every deploy and every restart." >&2
+    echo "  On Render, attach a Disk mounted at $PGDATA. In compose, a volume." >&2
+    echo "" >&2
+  fi
+
+  if [ ! -s "$PGDATA/PG_VERSION" ]; then
+    echo "Initialising a new database in $PGDATA..."
+    su-exec postgres initdb -D "$PGDATA" -U postgres --auth-local=trust --auth-host=scram-sha-256 >/dev/null
+  fi
+
+  # Loopback only. Nothing outside this container has any business reaching it,
+  # and binding wider would put a database on the internet by accident.
+  su-exec postgres pg_ctl -D "$PGDATA" -w -t 60 \
+    -o "-c listen_addresses=127.0.0.1 -p 5432" -l "$PGDATA/postgres.log" start
+
+  # Idempotent: the role and database survive restarts, so this only does
+  # anything the first time.
+  su-exec postgres psql -v ON_ERROR_STOP=1 --quiet -d postgres <<SQL || true
+SELECT 'CREATE ROLE "$DB_USER" LOGIN PASSWORD ''$DB_PASS'''
+ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$DB_USER')\gexec
+SELECT 'CREATE DATABASE "$DB_NAME" OWNER "$DB_USER"'
+ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME')\gexec
+SQL
+
+  : "${DATABASE_URL:=postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME}"
+  export DATABASE_URL
+
+  EMBEDDED=1
+fi
+
 if [ -z "${DATABASE_URL:-}" ]; then
-  echo "FATAL: DATABASE_URL is not set. Nothing to connect to." >&2
+  echo "FATAL: DATABASE_URL is not set, and EMBEDDED_DB is not 1." >&2
+  echo "  Set one, or set EMBEDDED_DB=1 to run a database inside this container." >&2
   exit 1
 fi
 
-# The host, for the diagnosis below. Kept crude on purpose: this is a shell
-# script in an alpine image, and the URL always has the same shape.
+# The host, for the diagnosis below. Crude on purpose: this is a shell script in
+# an alpine image and the URL always has the same shape.
 DB_HOST=$(printf '%s' "$DATABASE_URL" | sed -e 's|^.*@||' -e 's|[:/?].*$||')
 DB_PORT=$(printf '%s' "$DATABASE_URL" | sed -n 's|^.*@[^:]*:\([0-9]*\).*$|\1|p')
 DB_PORT="${DB_PORT:-5432}"
@@ -33,6 +87,29 @@ n=1
 while [ "$n" -le "$ATTEMPTS" ]; do
   if npx prisma db push --accept-data-loss; then
     echo "Database ready after ${n} attempt(s)."
+    if [ "${EMBEDDED:-0}" = "1" ]; then
+      # Not `exec`, deliberately.
+      #
+      # Replacing this shell with node means the container's stop signal goes to
+      # node and nothing ever stops PostgreSQL — it is killed mid-write, and the
+      # next boot spends its time recovering a data directory that did not need
+      # it. Not hypothetical: it is what this did on its second restart, and
+      # `prisma db push` then failed thirteen times running.
+      #
+      # So the shell stays, holds the signal, and shuts the database down the
+      # way a database expects to be shut down.
+      node dist/index.js &
+      APP_PID=$!
+      stop() {
+        kill "$APP_PID" 2>/dev/null || true
+        wait "$APP_PID" 2>/dev/null || true
+        su-exec postgres pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
+        exit 0
+      }
+      trap stop INT TERM
+      wait "$APP_PID"
+      stop
+    fi
     exec node dist/index.js
   fi
   echo "Database not ready (${n}/${ATTEMPTS}), retrying in ${DELAY}s..."
@@ -57,29 +134,14 @@ if [ -n "$ADDR" ]; then
     echo "  and whether the URL needs ?sslmode=require." >&2
   else
     echo "  Nothing is accepting connections on port $DB_PORT." >&2
-    echo "" >&2
-    echo "  If that address looks nothing like the database's, a wildcard DNS" >&2
-    echo "  search domain has answered for a name that does not exist — which on" >&2
-    echo "  Render means the short internal name is not resolvable from here." >&2
-    echo "  See below." >&2
-    echo "" >&2
-    echo "  On Render, a short internal name like 'dpg-xxxxx-a' only resolves for" >&2
-    echo "  services in the SAME REGION as the database. If the web service and" >&2
-    echo "  the database are in different regions, this is what it looks like." >&2
-    echo "" >&2
-    echo "  Either move them into one region, or use the external hostname —" >&2
-    echo "  'dpg-xxxxx-a.<region>-postgres.render.com', with ?sslmode=require —" >&2
-    echo "  which works across regions at the cost of going over the internet." >&2
   fi
 else
-  echo "  The hostname does not resolve from inside this container." >&2
+  echo "  '$DB_HOST' does not resolve from inside this container." >&2
   echo "" >&2
   echo "  On Render, a short internal name like 'dpg-xxxxx-a' only resolves for" >&2
-  echo "  services in the SAME REGION as the database. If the web service and the" >&2
-  echo "  database are in different regions, this is what it looks like." >&2
-  echo "" >&2
-  echo "  Either move them into one region, or use the external hostname —" >&2
-  echo "  'dpg-xxxxx-a.<region>-postgres.render.com', with ?sslmode=require —" >&2
-  echo "  which works across regions at the cost of going over the internet." >&2
+  echo "  services in the SAME REGION as the database, and only for services in" >&2
+  echo "  the same account. Either fix that, use the external hostname" >&2
+  echo "  ('dpg-xxxxx-a.<region>-postgres.render.com', with ?sslmode=require)," >&2
+  echo "  or set EMBEDDED_DB=1 and run the database in this container instead." >&2
 fi
 exit 1
