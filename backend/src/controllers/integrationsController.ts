@@ -308,7 +308,31 @@ export async function googleSync(req: AuthRequest, res: Response, next: NextFunc
       imported++;
     }
 
-    res.json({ synced: imported });
+    /*
+     * Catch up the ones imported before all-day meant informational.
+     *
+     * Applying the default only on create left every previously-imported
+     * all-day event at NORMAL for ever: a re-sync takes the update branch,
+     * which deliberately does not touch priority, so the pay day that prompted
+     * all of this went on flagging a conflict with every appointment on its day
+     * no matter how many times it was synced.
+     *
+     * Narrow on purpose. It touches only imported all-day events still at the
+     * schema default, so anything deliberately set to HIGH, LOW or
+     * INFORMATIONAL is left alone. NORMAL is not a considered choice on an
+     * event nobody has opened — it is what the column defaults to.
+     */
+    const { count: relabelled } = await prisma.event.updateMany({
+      where: {
+        userId: req.user!.id,
+        allDay: true,
+        priority: "NORMAL",
+        id: { startsWith: "google_" },
+      },
+      data: { priority: "INFORMATIONAL" },
+    });
+
+    res.json({ synced: imported, relabelled });
   } catch (err) { next(err); }
 }
 
