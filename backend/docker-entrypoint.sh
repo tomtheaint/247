@@ -134,6 +134,26 @@ diagnose() {
   fi
 }
 
+# Whether the schema push may destroy data to get its way.
+#
+# `--accept-data-loss` was on unconditionally, on every boot. It is not a flag
+# about migrations being messy: it is the flag that lets `db push` DROP a column
+# or a table when the live database does not match the schema, without asking.
+# Running that automatically on every container start means one drifted database
+# and the data is gone with a success message in the log.
+#
+# Without it, `db push` refuses and says what it would have destroyed — which is
+# a deploy that fails loudly instead of a deploy that succeeds quietly and takes
+# the users with it. Set ALLOW_DATA_LOSS=1 for the deploy where you mean it.
+#
+# A brand new database has nothing to lose, so this never blocks a first boot.
+if [ "${ALLOW_DATA_LOSS:-0}" = "1" ]; then
+  PUSH="npx prisma db push --accept-data-loss"
+  echo "ALLOW_DATA_LOSS=1: the schema push may drop columns and tables."
+else
+  PUSH="npx prisma db push"
+fi
+
 n=1
 while [ "$n" -le "$ATTEMPTS" ]; do
   # The first attempt speaks; the rest are counted.
@@ -143,9 +163,29 @@ while [ "$n" -le "$ATTEMPTS" ]; do
   # answer off the top. The last attempt's output is kept and printed if we run
   # out, so nothing is actually lost by being quiet in between.
   if [ "$n" -eq 1 ]; then
-    if npx prisma db push --accept-data-loss; then break; fi
+    if $PUSH; then break; fi
   else
-    if npx prisma db push --accept-data-loss >/tmp/db-push.log 2>&1; then break; fi
+    if $PUSH >/tmp/db-push.log 2>&1; then break; fi
+  fi
+
+  # A database that answers is not a database that is "not ready".
+  #
+  # The retry loop exists for one thing: a server still starting up. If the port
+  # accepts connections, the push failed for a reason waiting cannot fix — a
+  # refusal to destroy data, wrong credentials, a bad schema — and retrying it
+  # twenty times buries that reason under a minute of "not ready" and then
+  # reports it as an unreachable host, which is a different problem entirely.
+  if [ "${EMBEDDED:-0}" = "1" ] || nc -z -w 3 "$DB_HOST" "$DB_PORT" 2>/dev/null; then
+    if [ -s /tmp/db-push.log ]; then cat /tmp/db-push.log >&2; fi
+    echo "" >&2
+    echo "FATAL: ${DB_HOST}:${DB_PORT} is accepting connections, so this is not a" >&2
+    echo "  database that has yet to start. The schema push itself failed; the" >&2
+    echo "  reason is above. Not retrying." >&2
+    echo "" >&2
+    echo "  If it is refusing because the push would destroy data, that is the" >&2
+    echo "  safety working. Look at what it would drop before setting" >&2
+    echo "  ALLOW_DATA_LOSS=1, because it will do exactly that." >&2
+    exit 1
   fi
 
   # Diagnosed on the first failure, not the last.
