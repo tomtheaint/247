@@ -23,7 +23,12 @@ COPY --from=backend-builder /app/backend/dist ./dist
 COPY --from=backend-builder /app/backend/node_modules ./node_modules
 COPY --from=backend-builder /app/backend/prisma ./prisma
 COPY backend/package*.json ./
+COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 # Frontend build output served as static files by Express
 COPY --from=frontend-builder /app/frontend/dist ./public
 EXPOSE 4000
-CMD ["sh", "-c", "until npx prisma db push --accept-data-loss; do echo 'Database not ready, retrying in 3s...'; sleep 3; done && node dist/index.js"]
+# A script rather than an inline `until` loop: the old one never gave up, so an
+# unreachable database spun until the platform's deploy timeout and the log said
+# only "Timed Out". See the script for what it checks and why.
+CMD ["./docker-entrypoint.sh"]
