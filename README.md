@@ -138,7 +138,24 @@ JWT_SECRET=your_secret
 JWT_REFRESH_SECRET=your_refresh_secret
 PORT=4000
 NODE_ENV=development
+ADMIN_EMAILS=you@example.com    # optional, comma-separated
 ```
+
+#### Getting the first admin
+
+There is no default administrator and no seeded one. Registration always creates
+a `USER`, and the route that changes a role is itself behind `requireRole
+("ADMIN")` — so on a fresh database nobody can reach the admin pages, ever.
+
+`ADMIN_EMAILS` is the way in. Any address listed there is an admin: from the
+moment it registers if it has not yet, and from the next restart if the account
+already exists. Matching ignores case. It only ever promotes — removing an
+address does not demote anyone, because a typo in an environment variable should
+not silently strip somebody's access.
+
+`npm run seed` is a development convenience, not a way in: it creates
+`demo@247app.com` with the password `password123` and the ordinary `USER` role.
+Do not run it against anything reachable from the internet.
 
 ### Frontend (`frontend/.env.local`)
 ```

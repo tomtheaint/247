@@ -32,8 +32,16 @@ export async function register(req: Request, res: Response, next: NextFunction) 
 
     const passwordHash = await bcrypt.hash(body.password, config.bcryptRounds);
     const { password: _pw, ...bodyRest } = body;
+    // An address named in ADMIN_EMAILS is an admin from the moment it registers,
+    // so bootstrapping does not depend on registering first and restarting after.
+    const isAdmin = config.adminEmails.includes(body.email.toLowerCase());
     const user = await prisma.user.create({
-      data: { ...bodyRest, passwordHash, timezone: bodyRest.timezone ?? "America/New_York" },
+      data: {
+        ...bodyRest,
+        passwordHash,
+        timezone: bodyRest.timezone ?? "America/New_York",
+        ...(isAdmin ? { role: "ADMIN" as const } : {}),
+      },
       select: { id: true, email: true, username: true, displayName: true },
     });
 
