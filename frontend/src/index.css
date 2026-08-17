@@ -43,3 +43,37 @@
 .dark .rbc-time-slot {
   @apply border-gray-800;
 }
+
+/*
+ * Now.
+ *
+ * react-big-calendar draws this already, as a one-pixel green hairline that
+ * vanishes against a column of coloured events. It is the one line on the
+ * calendar that answers "where am I in this day", so it should be the easiest
+ * thing on it to find — hence the weight, the colour nothing else uses, and the
+ * dot on the axis so it can be picked out at a glance from across a room.
+ */
+.rbc-current-time-indicator {
+  background-color: #eab308;
+  height: 2px;
+  /* Above events, which are positioned and would otherwise cover it. */
+  z-index: 3;
+  pointer-events: none;
+}
+
+.rbc-current-time-indicator::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background-color: #eab308;
+}
+
+/* Dark mode gets a lighter amber: #eab308 is muddy on a dark ground. */
+.dark .rbc-current-time-indicator,
+.dark .rbc-current-time-indicator::before {
+  background-color: #fbbf24;
+}

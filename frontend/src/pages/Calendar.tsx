@@ -290,6 +290,7 @@ export function CalendarPage() {
   const [defaultStart, setDefaultStart] = useState<Date | undefined>();
   const [defaultEnd, setDefaultEnd] = useState<Date | undefined>();
   const [googleConnected, setGoogleConnected] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   // Pending drag-drop for recurring events (shows "move all" vs "move this one" dialog)
   const [pendingDrop, setPendingDrop] = useState<{ event: RBCEvent; start: Date; end: Date } | null>(null);
@@ -361,6 +362,42 @@ export function CalendarPage() {
   useEffect(() => {
     fetchGoals();
   }, [fetchGoals]);
+
+  /*
+   * Open the day where the day actually is.
+   *
+   * The grid starts at midnight, so every visit began with eight empty hours on
+   * screen and the working day pushed off the bottom.
+   *
+   * Not react-big-calendar's `scrollToTime`, which cannot do this: it is read
+   * once in componentDidMount and its ratio is discarded immediately after, and
+   * it is skipped entirely unless `enableAutoScroll` is passed — the prop has no
+   * default and the check is a strict `=== true`. So it silently does nothing
+   * here, which is a good deal of the time I spent on this.
+   *
+   * A third of the way down rather than at the top, so what has just finished is
+   * still on screen alongside what is next. Measured rather than assumed: a
+   * third of the visible height is a different number of hours on a laptop and
+   * on a television.
+   */
+  useEffect(() => {
+    if (view !== "week" && view !== "day") return;
+    let frame = 0;
+    let tries = 0;
+    const place = () => {
+      const content = gridRef.current?.querySelector(".rbc-time-content") as HTMLElement | null;
+      // Laid out but not yet sized on the first frames after a view change.
+      if (!content?.scrollHeight || !content.clientHeight) {
+        if (tries++ < 30) frame = requestAnimationFrame(place);
+        return;
+      }
+      const now = new Date();
+      const dayFraction = (now.getHours() * 60 + now.getMinutes()) / 1440;
+      content.scrollTop = Math.max(0, dayFraction * content.scrollHeight - content.clientHeight / 3);
+    };
+    frame = requestAnimationFrame(place);
+    return () => cancelAnimationFrame(frame);
+  }, [view, date]);
 
   useEffect(() => {
     // Whether to offer "show on Google Calendar" at all. A switch that cannot
@@ -885,7 +922,7 @@ export function CalendarPage() {
         />
       )}
 
-      <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4 min-h-0">
+      <div ref={gridRef} className="flex-1 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4 min-h-0">
         <DnDCalendar
           localizer={localizer}
           events={calendarEvents}
