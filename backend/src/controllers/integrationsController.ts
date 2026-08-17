@@ -7,12 +7,49 @@ const prisma = new PrismaClient();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Where the provider sends the browser back to.
+ *
+ * This defaulted to http://localhost:4000/... and the deployed app went on
+ * sending that to Google, which answers `Error 400: redirect_uri_mismatch` and
+ * names a URI that appears nowhere in your configuration — so the thing to fix
+ * is invisible from both ends.
+ *
+ * PUBLIC_URL is the origin this API answers on. The combined image serves the
+ * API and the frontend from one origin, so it is the site's own address. An
+ * explicit GOOGLE_REDIRECT_URI / MS_REDIRECT_URI still wins, since the value
+ * has to match what is registered with the provider character for character and
+ * sometimes that is not the tidy one.
+ */
+function callbackUrl(provider: "google" | "microsoft"): string {
+  const explicit =
+    provider === "google" ? process.env.GOOGLE_REDIRECT_URI : process.env.MS_REDIRECT_URI;
+  if (explicit) return explicit;
+  const base = (process.env.PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
+  if (base) return `${base}/api/integrations/${provider}/callback`;
+  return `http://localhost:4000/api/integrations/${provider}/callback`;
+}
+
+/**
+ * Where to send the browser once the provider has sent it back to us.
+ *
+ * Same failure as the callback URL, one step later: this fell back to the Vite
+ * dev server, so a connection that had just succeeded ended at
+ * localhost:5173 — which looks, from the outside, exactly like the connection
+ * failing. FRONTEND_URL first, since a split deployment has one; PUBLIC_URL
+ * otherwise, because the combined image serves the app from its own origin.
+ */
+function settingsOrigin(): string {
+  const base = (process.env.FRONTEND_URL ?? process.env.PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
+  return base || "http://localhost:5173";
+}
+
 function googleOAuthClient() {
   const { OAuth2Client } = require("google-auth-library");
   return new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:4000/api/integrations/google/callback"
+    callbackUrl("google")
   );
 }
 
@@ -44,6 +81,15 @@ export async function listIntegrations(req: AuthRequest, res: Response, next: Ne
 export async function googleAuthUrl(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     if (!process.env.GOOGLE_CLIENT_ID) throw new AppError("Google integration not configured", 501);
+    // The one fact needed to fix a redirect_uri_mismatch, which is otherwise
+    // only visible in Google's error page and only to whoever hit it.
+    const redirect = callbackUrl("google");
+    if (redirect.startsWith("http://localhost") && process.env.NODE_ENV === "production") {
+      console.warn(
+        `Google OAuth is sending redirect_uri=${redirect} from a production ` +
+          `deployment, which cannot work. Set PUBLIC_URL to this site's address.`,
+      );
+    }
     const client = googleOAuthClient();
     const url = client.generateAuthUrl({
       access_type: "offline",
@@ -87,7 +133,7 @@ export async function googleCallback(req: AuthRequest, res: Response, next: Next
       },
     });
 
-    res.redirect(`${process.env.FRONTEND_URL ?? "http://localhost:5173"}/settings?connected=google`);
+    res.redirect(`${settingsOrigin()}/settings?connected=google`);
   } catch (err) { next(err); }
 }
 
@@ -170,7 +216,7 @@ export async function microsoftAuthUrl(req: AuthRequest, res: Response, next: Ne
     const app = msalApp();
     const result = await app.getAuthCodeUrl({
       scopes: ["Calendars.ReadWrite", "User.Read", "offline_access"],
-      redirectUri: process.env.MS_REDIRECT_URI ?? "http://localhost:4000/api/integrations/microsoft/callback",
+      redirectUri: callbackUrl("microsoft"),
       state: req.user!.id,
     });
     res.json({ url: result });
@@ -184,7 +230,7 @@ export async function microsoftCallback(req: AuthRequest, res: Response, next: N
     const result = await app.acquireTokenByCode({
       code,
       scopes: ["Calendars.ReadWrite", "User.Read", "offline_access"],
-      redirectUri: process.env.MS_REDIRECT_URI ?? "http://localhost:4000/api/integrations/microsoft/callback",
+      redirectUri: callbackUrl("microsoft"),
     });
 
     const Client = require("@microsoft/microsoft-graph-client").Client;
@@ -210,7 +256,7 @@ export async function microsoftCallback(req: AuthRequest, res: Response, next: N
       },
     });
 
-    res.redirect(`${process.env.FRONTEND_URL ?? "http://localhost:5173"}/settings?connected=microsoft`);
+    res.redirect(`${settingsOrigin()}/settings?connected=microsoft`);
   } catch (err) { next(err); }
 }
 

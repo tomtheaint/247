@@ -157,6 +157,23 @@ not silently strip somebody's access.
 `demo@247app.com` with the password `password123` and the ordinary `USER` role.
 Do not run it against anything reachable from the internet.
 
+#### Connecting Google or Microsoft calendars
+
+The OAuth callback URL defaults to `PUBLIC_URL` + `/api/integrations/<provider>/callback`.
+Set `PUBLIC_URL` to the site's own address (no trailing slash) and register the
+resulting URL with the provider — the two must match exactly, including the
+scheme and the absence of a trailing slash:
+
+```
+PUBLIC_URL=https://your-app.onrender.com
+# Google Cloud Console -> Credentials -> OAuth 2.0 Client ID -> Authorized redirect URIs:
+#   https://your-app.onrender.com/api/integrations/google/callback
+```
+
+`GOOGLE_REDIRECT_URI` / `MS_REDIRECT_URI` still override it when the registered
+value is not that shape. Without either, the app sends `http://localhost:4000/...`,
+and Google answers `Error 400: redirect_uri_mismatch`.
+
 ### Frontend (`frontend/.env.local`)
 ```
 VITE_API_URL=http://localhost:4000/api
