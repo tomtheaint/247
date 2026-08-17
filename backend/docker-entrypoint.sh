@@ -97,65 +97,114 @@ DB_HOST=$(printf '%s' "$DATABASE_URL" | sed -e 's|^.*@||' -e 's|[:/?].*$||')
 DB_PORT=$(printf '%s' "$DATABASE_URL" | sed -n 's|^.*@[^:]*:\([0-9]*\).*$|\1|p')
 DB_PORT="${DB_PORT:-5432}"
 
-n=1
-while [ "$n" -le "$ATTEMPTS" ]; do
-  if npx prisma db push --accept-data-loss; then
-    echo "Database ready after ${n} attempt(s)."
-    if [ "${EMBEDDED:-0}" = "1" ]; then
-      # Not `exec`, deliberately.
-      #
-      # Replacing this shell with node means the container's stop signal goes to
-      # node and nothing ever stops PostgreSQL — it is killed mid-write, and the
-      # next boot spends its time recovering a data directory that did not need
-      # it. Not hypothetical: it is what this did on its second restart, and
-      # `prisma db push` then failed thirteen times running.
-      #
-      # So the shell stays, holds the signal, and shuts the database down the
-      # way a database expects to be shut down.
-      node dist/index.js &
-      APP_PID=$!
-      stop() {
-        kill "$APP_PID" 2>/dev/null || true
-        wait "$APP_PID" 2>/dev/null || true
-        su-exec postgres pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
-        exit 0
-      }
-      trap stop INT TERM
-      wait "$APP_PID"
-      stop
-    fi
-    exec node dist/index.js
-  fi
-  echo "Database not ready (${n}/${ATTEMPTS}), retrying in ${DELAY}s..."
-  n=$((n + 1))
-  sleep "$DELAY"
-done
-
-echo "" >&2
-echo "FATAL: gave up after ${ATTEMPTS} attempts to reach ${DB_HOST}:${DB_PORT}." >&2
-echo "" >&2
+# Which database this container is about to use, said once, up front.
+#
+# Every line of the failure log used to be true and none of it answered "is this
+# even trying to use the embedded database?" — the one question you have when a
+# deploy you just reconfigured fails the same way it did before.
+if [ "${EMBEDDED:-0}" = "1" ]; then
+  echo "Using the database inside this container (EMBEDDED_DB=1)."
+else
+  echo "Using the database at ${DB_HOST}:${DB_PORT} (EMBEDDED_DB is not set)."
+fi
 
 # Three causes look identical in Prisma's error, and separating them is the
 # whole point of printing anything here. Resolution alone is not enough — a
 # network with a wildcard search domain resolves everything — so the port is
 # probed as well.
-ADDR=$(getent ahostsv4 "$DB_HOST" 2>/dev/null | head -1 | cut -d' ' -f1 || true)
-if [ -n "$ADDR" ]; then
-  echo "  '$DB_HOST' resolves to $ADDR." >&2
-  if nc -z -w 3 "$DB_HOST" "$DB_PORT" 2>/dev/null; then
-    echo "  Port $DB_PORT accepts connections, so the database is reachable and" >&2
-    echo "  refusing this connection: check the credentials, the database name," >&2
-    echo "  and whether the URL needs ?sslmode=require." >&2
+diagnose() {
+  ADDR=$(getent ahostsv4 "$DB_HOST" 2>/dev/null | head -1 | cut -d' ' -f1 || true)
+  if [ -n "$ADDR" ]; then
+    echo "  '$DB_HOST' resolves to $ADDR." >&2
+    if nc -z -w 3 "$DB_HOST" "$DB_PORT" 2>/dev/null; then
+      echo "  Port $DB_PORT accepts connections, so the database is reachable and" >&2
+      echo "  refusing this connection: check the credentials, the database name," >&2
+      echo "  and whether the URL needs ?sslmode=require." >&2
+    else
+      echo "  Nothing is accepting connections on port $DB_PORT." >&2
+    fi
   else
-    echo "  Nothing is accepting connections on port $DB_PORT." >&2
+    echo "  '$DB_HOST' does not resolve from inside this container." >&2
+    echo "" >&2
+    echo "  On Render, a short internal name like 'dpg-xxxxx-a' only resolves for" >&2
+    echo "  services in the SAME REGION as the database, and only for services in" >&2
+    echo "  the same account. Either fix that, use the external hostname" >&2
+    echo "  ('dpg-xxxxx-a.<region>-postgres.render.com', with ?sslmode=require)," >&2
+    echo "  or set EMBEDDED_DB=1 and run the database in this container instead." >&2
   fi
-else
-  echo "  '$DB_HOST' does not resolve from inside this container." >&2
+}
+
+n=1
+while [ "$n" -le "$ATTEMPTS" ]; do
+  # The first attempt speaks; the rest are counted.
+  #
+  # Twenty copies of one Prisma error is not twenty pieces of information, and
+  # the log this produced was a minute of identical paragraphs scrolling a real
+  # answer off the top. The last attempt's output is kept and printed if we run
+  # out, so nothing is actually lost by being quiet in between.
+  if [ "$n" -eq 1 ]; then
+    if npx prisma db push --accept-data-loss; then break; fi
+  else
+    if npx prisma db push --accept-data-loss >/tmp/db-push.log 2>&1; then break; fi
+  fi
+
+  # Diagnosed on the first failure, not the last.
+  #
+  # This ran only after the retries were exhausted, so the one paragraph that
+  # says *why* arrived sixty seconds after the paragraph that says "failed" —
+  # and only if you were still watching. Everything it checks is already knowable
+  # now. Retrying continues regardless: a database that is merely still booting
+  # gets its twenty attempts, it just no longer withholds the diagnosis while it
+  # waits.
+  if [ "$n" -eq 1 ]; then
+    echo "" >&2
+    echo "Could not reach ${DB_HOST}:${DB_PORT}. What this container can see:" >&2
+    diagnose
+    echo "" >&2
+    echo "  Retrying anyway, in case it is still starting up." >&2
+    echo "" >&2
+  fi
+
+  echo "Database not ready (${n}/${ATTEMPTS}), retrying in ${DELAY}s..."
+  n=$((n + 1))
+  sleep "$DELAY"
+done
+
+if [ "$n" -gt "$ATTEMPTS" ]; then
+  # `if` rather than `[ -s … ] && cat`: under `set -e` a false test at the end of
+  # an && list exits the shell, which would skip the FATAL block below entirely.
+  if [ -s /tmp/db-push.log ]; then cat /tmp/db-push.log >&2; fi
   echo "" >&2
-  echo "  On Render, a short internal name like 'dpg-xxxxx-a' only resolves for" >&2
-  echo "  services in the SAME REGION as the database, and only for services in" >&2
-  echo "  the same account. Either fix that, use the external hostname" >&2
-  echo "  ('dpg-xxxxx-a.<region>-postgres.render.com', with ?sslmode=require)," >&2
-  echo "  or set EMBEDDED_DB=1 and run the database in this container instead." >&2
+  echo "FATAL: gave up after ${ATTEMPTS} attempts to reach ${DB_HOST}:${DB_PORT}." >&2
+  echo "" >&2
+  diagnose
+  exit 1
 fi
-exit 1
+
+echo "Database ready after ${n} attempt(s)."
+
+if [ "${EMBEDDED:-0}" = "1" ]; then
+  # Not `exec`, deliberately.
+  #
+  # Replacing this shell with node means the container's stop signal goes to
+  # node and nothing ever stops PostgreSQL — it is killed mid-write, and the
+  # next boot spends its time recovering a data directory that did not need it.
+  # Not hypothetical: it is what this did on its second restart, and
+  # `prisma db push` then failed thirteen times running.
+  #
+  # So the shell stays, holds the signal, and shuts the database down the way a
+  # database expects to be shut down.
+  node dist/index.js &
+  APP_PID=$!
+  stop() {
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+    su-exec postgres pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
+    exit 0
+  }
+  trap stop INT TERM
+  wait "$APP_PID"
+  stop
+fi
+
+exec node dist/index.js
