@@ -165,6 +165,11 @@ and new containers cannot hold the same disk at once. The container says so on
 start-up if the path is not a mount, but it says it in a log nobody reads until
 afterwards.
 
+`EMBEDDED_DB=1` wins over any `DATABASE_URL` that is already set, and says in
+the log which host it is ignoring. Otherwise a leftover URL from a previous
+setup silently beats the flag, and the container starts a database, ignores it,
+and fails to reach the old one.
+
 Without `EMBEDDED_DB`, `DATABASE_URL` names a database somewhere else, which is
 what `docker-compose.yml` does locally.
 

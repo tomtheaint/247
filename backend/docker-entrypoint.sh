@@ -65,7 +65,21 @@ SELECT 'CREATE DATABASE "$DB_NAME" OWNER "$DB_USER"'
  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME')\gexec
 SQL
 
-  : "${DATABASE_URL:=postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME}"
+  # Overridden, not defaulted.
+  #
+  # `EMBEDDED_DB=1` says "run the database in this container", and the only
+  # coherent reading of that is "and use it". Filling this in only when it was
+  # empty meant a DATABASE_URL left over from a previous setup silently won, so
+  # the container started a database, ignored it, and spent twenty attempts
+  # failing to reach the old host — with nothing in the log to say why, because
+  # every line of it was true.
+  EMBEDDED_URL="postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME"
+  if [ -n "${DATABASE_URL:-}" ] && [ "$DATABASE_URL" != "$EMBEDDED_URL" ]; then
+    OLD_HOST=$(printf '%s' "$DATABASE_URL" | sed -e 's|^.*@||' -e 's|[:/?].*$||')
+    echo "EMBEDDED_DB=1, so ignoring the DATABASE_URL pointing at '$OLD_HOST'" >&2
+    echo "  and using the database in this container instead. Unset it to silence this." >&2
+  fi
+  DATABASE_URL="$EMBEDDED_URL"
   export DATABASE_URL
 
   EMBEDDED=1
