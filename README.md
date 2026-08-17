@@ -209,8 +209,14 @@ what `docker-compose.yml` does locally.
 
 ### A note on `prisma db push`
 
-Start-up runs `prisma db push --accept-data-loss`, which reshapes the live
-database to match `schema.prisma` — and the flag means what it says: it will
-drop a column, or a table, to make them match. There is no `prisma/migrations`
-directory yet, which is why. Before this database holds anything worth keeping,
-generate migrations and switch the entrypoint to `prisma migrate deploy`.
+Start-up runs `prisma db push`, which reshapes the live database to match
+`schema.prisma`. There is no `prisma/migrations` directory yet, which is why.
+
+It runs *without* `--accept-data-loss`, so a push that would drop a column or a
+table refuses and names what it would have destroyed, and the deploy fails while
+the data is still there. `ALLOW_DATA_LOSS=1` for the deploy where you mean it —
+it will then do exactly what it says.
+
+That is a guard, not a migration strategy. Before this database holds anything
+worth keeping, generate migrations and switch the entrypoint to
+`prisma migrate deploy`.
