@@ -8,9 +8,11 @@ import integrationRoutes from "./integrations";
 import userRoutes from "./users";
 import adminRoutes from "./admin";
 import reviewerRoutes from "./reviewer";
+import versionRoutes from "./version";
 
 const router = Router();
 
+router.use("/version", versionRoutes);
 router.use("/auth", authRoutes);
 router.use("/goals", goalRoutes);
 router.use("/events", eventRoutes);

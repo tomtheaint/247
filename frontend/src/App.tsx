@@ -16,6 +16,7 @@ import { ReviewerPage } from "./pages/Reviewer";
 import { RecurringEventsPage } from "./pages/RecurringEvents";
 import { useAuthStore } from "./store/authStore";
 import type { UserRole } from "./types";
+import { VersionStamp } from "./components/VersionStamp";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { accessToken } = useAuthStore();
@@ -53,6 +54,10 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      {/* Outside the routes: it has its own clock and belongs on every screen,
+          including the login page, which is exactly where somebody checks
+          whether their deploy landed. */}
+      <VersionStamp />
     </BrowserRouter>
   );
 }
