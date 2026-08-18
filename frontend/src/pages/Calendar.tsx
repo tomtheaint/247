@@ -752,8 +752,19 @@ export function CalendarPage() {
     const [sleepH, sleepM] = (sleepStr ?? "23:00").split(":").map(Number);
     const slotMinutes  = slotDate.getHours() * 60 + slotDate.getMinutes();
     const wakeMinutes  = wakeH  * 60 + wakeM;
-    const sleepMinutes = sleepH * 60 + sleepM;
-    if (slotMinutes < wakeMinutes || slotMinutes >= sleepMinutes) {
+    let sleepMinutes   = sleepH * 60 + sleepM;
+    /*
+     * A sleep time at or before the wake time means the next day.
+     *
+     * Someone who sleeps at half past midnight is awake until 24:30, not until
+     * 00:30 — which as written is a window that has already closed, so every
+     * hour of the day shaded as asleep.
+     */
+    if (sleepMinutes <= wakeMinutes) sleepMinutes += 24 * 60;
+    // The early hours belong to the night before, so they are measured on the
+    // same scale: 00:15 is 24:15 of the day whose evening it continues.
+    const slot = slotMinutes < wakeMinutes ? slotMinutes + 24 * 60 : slotMinutes;
+    if (slot < wakeMinutes || slot >= sleepMinutes) {
       return { style: { backgroundColor: "rgba(0,0,0,0.045)" } };
     }
     return {};

@@ -29,8 +29,29 @@ interface UserPrefs {
   chronotype: string;
 }
 
-function parseHour(hhmm: string): number {
-  return parseInt(hhmm.split(":")[0], 10);
+/** "07:30" as 7.5. Minutes matter: a sleep time of 00:30 is not midnight. */
+function parseTime(hhmm: string): number {
+  const [h, m] = String(hhmm ?? "").split(":").map(Number);
+  return (Number.isFinite(h) ? h : 0) + (Number.isFinite(m) ? m / 60 : 0);
+}
+
+/**
+ * The hours a person is awake, as a window that may run past midnight.
+ *
+ * Someone who sleeps at half past midnight is awake from 07:30 to 24:30, not
+ * from 07:30 to 00:30 — which is an empty window, and read literally it made
+ * every event on the calendar a conflict with sleep and left the scheduler with
+ * nowhere at all to put anything.
+ *
+ * Returned in hours from the start of the waking day, so the end may be more
+ * than 24. Everything compared against it is measured the same way.
+ */
+export function wakeWindow(prefs: UserPrefs, weekend: boolean): { wake: number; sleep: number } {
+  const wake = parseTime(weekend ? prefs.wakeTimeWeekend : prefs.wakeTimeWeekday);
+  const sleep = parseTime(weekend ? prefs.sleepTimeWeekend : prefs.sleepTimeWeekday);
+  // Sleeping at or before waking means the next day, which is what a night owl
+  // is describing when they say half past midnight.
+  return { wake, sleep: sleep <= wake ? sleep + 24 : sleep };
 }
 
 /**
@@ -68,10 +89,17 @@ export function overlaps(a: SlimEvent, b: SlimEvent): boolean {
 export function conflictsWithSleep(event: SlimEvent, prefs: UserPrefs, tzOffsetMinutes = 0): boolean {
   const localWeekday = getLocalWeekday(event.startTime, tzOffsetMinutes);
   const weekend = localWeekday === 0 || localWeekday === 6;
-  const wake  = parseHour(weekend ? prefs.wakeTimeWeekend  : prefs.wakeTimeWeekday);
-  const sleep = parseHour(weekend ? prefs.sleepTimeWeekend : prefs.sleepTimeWeekday);
-  const startH = getLocalHour(event.startTime, tzOffsetMinutes);
-  const endH   = getLocalHour(event.endTime,   tzOffsetMinutes) + (event.endTime.getMinutes() > 0 ? 1 : 0);
+  const { wake, sleep } = wakeWindow(prefs, weekend);
+
+  /*
+   * The end measured from the start, not from its own clock face.
+   *
+   * An event running 23:00 to 00:30 ends at hour 0, which compared against a
+   * window is earlier than it began. Adding its length to its start keeps it on
+   * the same scale as a window that runs past midnight.
+   */
+  const startH = getLocalHour(event.startTime, tzOffsetMinutes) + event.startTime.getMinutes() / 60;
+  const endH = startH + (event.endTime.getTime() - event.startTime.getTime()) / 3600000;
   return startH < wake || endH > sleep;
 }
 
@@ -133,10 +161,17 @@ export function findAlternativeSlot(
 
     const localWeekday = getLocalWeekday(day, tzOffsetMinutes);
     const weekend = localWeekday === 0 || localWeekday === 6;
-    const wake  = parseHour(weekend ? prefs.wakeTimeWeekend  : prefs.wakeTimeWeekday);
-    const sleep = parseHour(weekend ? prefs.sleepTimeWeekend : prefs.sleepTimeWeekday);
+    const { wake, sleep } = wakeWindow(prefs, weekend);
 
     for (const h of chronoOrder) {
+      /*
+       * Candidate hours are hours of this calendar day, so the sliver of a
+       * waking window that runs past midnight is not offered for a new session
+       * — a night owl who sleeps at half past midnight will not be booked into
+       * that half hour. It is still not treated as a conflict, which was the
+       * actual complaint; placing something there is a smaller question than
+       * teaching slot search to straddle two days.
+       */
       if (h < wake) continue;
       if (h + durationMs / 3600000 > sleep) continue;
       // Skip the exact original slot
@@ -194,8 +229,7 @@ export function findBestSlot(
   for (const day of daysToTry) {
     const localWeekday = getLocalWeekday(day, tzOffsetMinutes);
     const weekend = localWeekday === 0 || localWeekday === 6;
-    const wake  = parseHour(weekend ? prefs.wakeTimeWeekend  : prefs.wakeTimeWeekday);
-    const sleep = parseHour(weekend ? prefs.sleepTimeWeekend : prefs.sleepTimeWeekday);
+    const { wake, sleep } = wakeWindow(prefs, weekend);
 
     // All valid hours for this day, sorted by distance from original hour.
     // This keeps moves as small as possible rather than snapping to chronotype.

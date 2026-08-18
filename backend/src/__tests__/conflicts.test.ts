@@ -1,4 +1,4 @@
-import { detectConflicts, isInformational, findAlternativeSlot } from "../utils/conflicts";
+import { detectConflicts, isInformational, findAlternativeSlot, conflictsWithSleep, wakeWindow } from "../utils/conflicts";
 
 const prefs = {
   wakeTimeWeekday: "07:00",
@@ -94,5 +94,71 @@ describe("informational events", () => {
     const overlapsBlock =
       slot!.startTime < blocked.endTime && slot!.endTime > blocked.startTime;
     expect(overlapsBlock).toBe(true);
+  });
+});
+
+describe("a waking window that runs past midnight", () => {
+  /** The reported setup: up at 07:30, asleep at half past midnight. */
+  const nightOwl = {
+    wakeTimeWeekday: "07:30",
+    sleepTimeWeekday: "00:30",
+    wakeTimeWeekend: "08:00",
+    sleepTimeWeekend: "01:00",
+    chronotype: "NIGHT_OWL",
+  };
+
+  /** A Wednesday, so the weekday times apply. */
+  function at(startHour: number, startMin: number, hours: number) {
+    const start = new Date(`2024-06-12T${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}:00Z`);
+    return {
+      id: `e${startHour}`,
+      startTime: start,
+      endTime: new Date(start.getTime() + hours * 3600000),
+      goalId: null,
+    };
+  }
+
+  it("leaves an ordinary evening alone", () => {
+    // The reported symptom: a 6:10pm event flagged "outside sleep/wake window"
+    // because 00:30 read as hour 0, so everything ended after bedtime.
+    expect(conflictsWithSleep(at(18, 10, 1), nightOwl)).toBe(false);
+    expect(conflictsWithSleep(at(9, 0, 2), nightOwl)).toBe(false);
+    expect(conflictsWithSleep(at(23, 0, 1), nightOwl)).toBe(false);
+  });
+
+  it("still knows when somebody is asleep", () => {
+    expect(conflictsWithSleep(at(3, 0, 1), nightOwl)).toBe(true);
+    expect(conflictsWithSleep(at(6, 0, 1), nightOwl)).toBe(true);
+    // Running past bedtime, rather than starting after it.
+    expect(conflictsWithSleep(at(23, 45, 2), nightOwl)).toBe(true);
+  });
+
+  it("counts the minutes, not just the hour", () => {
+    // 00:30 truncated to hour 0 lost half an hour of somebody's evening.
+    expect(conflictsWithSleep(at(23, 30, 0.75), nightOwl)).toBe(false);
+    expect(conflictsWithSleep(at(23, 30, 1.25), nightOwl)).toBe(true);
+  });
+
+  it("does not disturb an ordinary window", () => {
+    const early = { ...nightOwl, wakeTimeWeekday: "07:00", sleepTimeWeekday: "23:00" };
+    expect(conflictsWithSleep(at(9, 0, 1), early)).toBe(false);
+    expect(conflictsWithSleep(at(6, 0, 1), early)).toBe(true);
+    expect(conflictsWithSleep(at(22, 30, 1), early)).toBe(true);
+  });
+
+  it("reports the window it will use", () => {
+    expect(wakeWindow(nightOwl, false)).toEqual({ wake: 7.5, sleep: 24.5 });
+    expect(wakeWindow(nightOwl, true)).toEqual({ wake: 8, sleep: 25 });
+    // An ordinary one is left exactly as written.
+    expect(wakeWindow({ ...nightOwl, wakeTimeWeekday: "07:00", sleepTimeWeekday: "23:00" }, false))
+      .toEqual({ wake: 7, sleep: 23 });
+  });
+
+  it("gives the scheduler somewhere to put things", () => {
+    // With the window read literally there were no legal hours at all, so
+    // auto-fix silently had nowhere to move anything to.
+    const slot = findAlternativeSlot(at(3, 0, 1), 3600000, [at(3, 0, 1)], nightOwl);
+    expect(slot).not.toBeNull();
+    expect(conflictsWithSleep({ ...at(0, 0, 1), ...slot!, id: "x", goalId: null }, nightOwl)).toBe(false);
   });
 });

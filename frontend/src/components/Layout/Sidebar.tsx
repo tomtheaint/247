@@ -14,9 +14,13 @@ const baseLinks = [
 
 interface Props {
   onClose?: () => void;
+  /** Narrowed to icons. Only the desktop rail does this; the mobile drawer is
+   *  already a deliberate act to open and has the whole screen to use. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-export function Sidebar({ onClose }: Props) {
+export function Sidebar({ onClose, collapsed = false, onToggleCollapse }: Props) {
   const { user, logout } = useAuthStore();
   const role = user?.role ?? "USER";
 
@@ -31,10 +35,23 @@ export function Sidebar({ onClose }: Props) {
   ];
 
   return (
-    <aside className="w-64 flex flex-col bg-gray-900 text-white h-full">
-      <div className="flex items-center gap-3 p-6 border-b border-gray-700">
-        <div className="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center font-bold text-sm">24</div>
-        <span className="font-bold text-lg tracking-tight">24/7</span>
+    <aside className={clsx("flex flex-col bg-gray-900 text-white h-full", collapsed ? "w-16" : "w-64")}>
+      <div className={clsx("flex items-center border-b border-gray-700", collapsed ? "flex-col gap-2 p-3" : "gap-3 p-6")}>
+        <div className="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center font-bold text-sm shrink-0">24</div>
+        {!collapsed && <span className="font-bold text-lg tracking-tight flex-1">24/7</span>}
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            title={collapsed ? "Expand the menu" : "Collapse the menu"}
+            aria-label={collapsed ? "Expand the menu" : "Collapse the menu"}
+            aria-expanded={!collapsed}
+            className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d={collapsed ? "M9 5l7 7-7 7" : "M15 19l-7-7 7-7"} />
+            </svg>
+          </button>
+        )}
       </div>
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
@@ -43,8 +60,12 @@ export function Sidebar({ onClose }: Props) {
             key={to}
             to={to}
             onClick={onClose}
+            // The label is the tooltip once it is not on screen, so a narrowed
+            // rail is still readable rather than a column of guesses.
+            title={collapsed ? label : undefined}
             className={({ isActive }) =>
-              clsx("flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+              clsx("flex items-center rounded-lg text-sm font-medium transition-colors",
+                collapsed ? "justify-center px-2 py-2.5" : "gap-3 px-3 py-2.5",
                 isActive
                   ? "bg-brand-600 text-white"
                   : "text-gray-300 hover:bg-gray-800 hover:text-white"
@@ -54,29 +75,39 @@ export function Sidebar({ onClose }: Props) {
             <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
             </svg>
-            {label}
+            {!collapsed && label}
           </NavLink>
         ))}
       </nav>
 
-      <div className="p-4 border-t border-gray-700">
-        <div className="flex items-center gap-3 px-3 py-2 mb-2">
-          <div className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center text-xs font-bold uppercase">
+      <div className={clsx("border-t border-gray-700", collapsed ? "p-2" : "p-4")}>
+        <div className={clsx("flex items-center py-2 mb-2", collapsed ? "justify-center" : "gap-3 px-3")}>
+          <div
+            className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center text-xs font-bold uppercase shrink-0"
+            title={collapsed ? (user?.displayName ?? user?.username) : undefined}
+          >
             {user?.displayName?.[0] ?? user?.username?.[0] ?? "?"}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{user?.displayName ?? user?.username}</p>
-            <p className="text-xs text-gray-400 truncate">{user?.role?.toLowerCase()}</p>
-          </div>
+          {!collapsed && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{user?.displayName ?? user?.username}</p>
+              <p className="text-xs text-gray-400 truncate">{user?.role?.toLowerCase()}</p>
+            </div>
+          )}
         </div>
         <button
           onClick={logout}
-          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+          title={collapsed ? "Sign out" : undefined}
+          aria-label="Sign out"
+          className={clsx(
+            "w-full flex items-center py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-800 rounded-lg transition-colors",
+            collapsed ? "justify-center px-2" : "gap-2 px-3",
+          )}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
           </svg>
-          Sign out
+          {!collapsed && "Sign out"}
         </button>
       </div>
     </aside>
